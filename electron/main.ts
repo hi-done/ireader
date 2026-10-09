@@ -1,4 +1,4 @@
-import { app, BrowserWindow } from 'electron'
+import { app, BrowserWindow, Menu } from 'electron'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
 import { initDatabase, closeDatabase } from './db/database'
@@ -87,6 +87,11 @@ app.whenReady().then(() => {
   }
   registerProtocolHandler()
   registerIpcHandlers(() => win)
+  // 移除 Electron 默认菜单（File/Edit/View/Window/Help）：Windows/Linux 上它占掉窗口顶部一条栏
+  // macOS 保留默认菜单：其菜单在屏幕顶部系统栏、不占窗口空间，且移除会导致 Cmd+C/V 等系统快捷键失效
+  if (process.platform !== 'darwin') {
+    Menu.setApplicationMenu(null)
+  }
   createWindow()
   info('app ready')
 })
