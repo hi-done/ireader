@@ -1,0 +1,230 @@
+/* 全局样式与设计令牌：清爽克制、杂志级排版
+   —— 米白/雾灰背景、三级文字层级、品牌色仅用于主按钮与关键状态 */
+
+:root {
+  /* 苹果系统字体栈：macOS 走 SF Pro，中文回落苹方 */
+  font-family:
+    -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'PingFang SC', 'Helvetica Neue', system-ui,
+    sans-serif;
+  line-height: 1.5;
+  font-weight: 400;
+
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+
+  /* 浅色主题：macOS/iOS 系统配色——浅灰底、纯白面、苹果三档文字色、系统蓝强调 */
+  color-scheme: light;
+  --bg: #f5f5f7;
+  --surface: #ffffff;
+  --surface-2: #f2f2f4;
+  /* 毛玻璃承载色（Apple 配方：72% 不透明 + blur(20px) saturate(180%)） */
+  --surface-alpha: rgba(255, 255, 255, 0.72);
+  --text: #1d1d1f;
+  --text-secondary: #6e6e73;
+  --text-muted: #86868b;
+  --text-faint: #aeaeb2;
+  --border: #e5e5ea;
+  --brand: #007aff;
+  --brand-hover: #0063cc;
+  --brand-soft: #e8f1fe;
+  --danger: #c04646;
+  --danger-hover: #a93b3b;
+  --danger-soft: #faeeee;
+  --overlay: rgba(0, 0, 0, 0.4);
+  --placeholder: #ececee;
+  --shadow-sm: 0 1px 2px rgba(28, 28, 26, 0.05);
+  --shadow-md: 0 1px 2px rgba(28, 28, 26, 0.05), 0 4px 14px rgba(28, 28, 26, 0.06);
+  --toast-bg: #2c2c2e;
+  --toast-text: #f5f5f7;
+  /* 主页 hero 遮罩：左深右浅（文字区在左压暗保白字可读，右侧图完整无遮挡） */
+  --hero-veil: linear-gradient(
+    90deg,
+    rgba(20, 22, 30, 0.55) 0%,
+    rgba(20, 22, 30, 0.3) 40%,
+    rgba(20, 22, 30, 0.06) 70%,
+    rgba(20, 22, 30, 0) 100%
+  );
+  /* 整窗背景图纱罩：盖住 bg001.jpg 保内容可读，图在纱下透出约 18% */
+  --page-veil: linear-gradient(rgba(245, 245, 247, 0.82), rgba(245, 245, 247, 0.82));
+  --radius: 8px;
+}
+
+/* 深色主题：由 theme.ts 在 documentElement 上设置 data-theme，保持同等精致感 */
+:root[data-theme='dark'] {
+  color-scheme: dark;
+  /* iOS 深色：纯黑底 + 两级灰面，与主窗口 backgroundColor #000 一致 */
+  --bg: #000000;
+  --surface: #1c1c1e;
+  --surface-2: #242426;
+  --surface-alpha: rgba(28, 28, 30, 0.72);
+  --text: #f5f5f7;
+  --text-secondary: #98989d;
+  --text-muted: #6c6c70;
+  --text-faint: #48484a;
+  --border: #2c2c2e;
+  --brand: #0a84ff;
+  --brand-hover: #409cff;
+  --brand-soft: #0b2440;
+  --danger: #dd8080;
+  --danger-hover: #e69494;
+  --danger-soft: #3a2a2a;
+  --overlay: rgba(0, 0, 0, 0.55);
+  --placeholder: #242426;
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.25);
+  --shadow-md: 0 1px 2px rgba(0, 0, 0, 0.25), 0 4px 14px rgba(0, 0, 0, 0.2);
+  --toast-bg: #2c2c2e;
+  --toast-text: #f2f2f7;
+  --hero-veil: linear-gradient(
+    90deg,
+    rgba(10, 11, 14, 0.6) 0%,
+    rgba(10, 11, 14, 0.35) 40%,
+    rgba(10, 11, 14, 0.1) 70%,
+    rgba(10, 11, 14, 0) 100%
+  );
+  /* 深色纱更薄，背景图透出约 40% 氛围 */
+  --page-veil: linear-gradient(rgba(0, 0, 0, 0.6), rgba(0, 0, 0, 0.6));
+}
+
+/* html 必须先有确定高度：body/#app/视图的 height:100% 都相对它计算，
+   缺失时整条百分比链从根上失效（阅读页底部会露出 body 背景） */
+html {
+  height: 100%;
+}
+
+body {
+  /* 应用占满视口；阅读页自身恒定纯黑，不受主题影响 */
+  margin: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  overscroll-behavior: none;
+  color: var(--text);
+  background-color: var(--bg);
+}
+
+/* macOS 隐藏标题栏后红绿灯悬浮在内容左上（约 12-38px 高、80px 宽），
+   顶部含左侧控件的视图行需为其留出空间 */
+.platform-mac .top-bar,
+.platform-mac .collection-head,
+.platform-mac .page-head {
+  padding-left: 84px;
+}
+
+#app {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+}
+
+/* —— 排版：层级明确、字重不细弱 —— */
+h1,
+h2,
+h3 {
+  font-weight: 600;
+  line-height: 1.25;
+  margin: 0;
+}
+
+/* —— 按钮三级体系：主按钮（品牌填充）/ 次按钮（描边）/ 文字按钮 —— */
+button {
+  font-family: inherit;
+  font-size: 13.5px;
+  font-weight: 500;
+  color: var(--text);
+  background-color: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 7px 14px;
+  cursor: pointer;
+  transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease,
+    opacity 0.15s ease, transform 0.1s ease;
+}
+
+button:hover {
+  background-color: var(--surface-2);
+}
+
+button:active {
+  transform: translateY(0.5px);
+}
+
+button:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 2px;
+}
+
+button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  transform: none;
+}
+
+/* 主按钮：一页一个，品牌色填充 */
+button.primary,
+.btn-primary {
+  background-color: var(--brand);
+  border-color: var(--brand);
+  color: #fff;
+}
+
+button.primary:hover,
+.btn-primary:hover {
+  background-color: var(--brand-hover);
+  border-color: var(--brand-hover);
+}
+
+/* 危险主按钮：破坏性操作 */
+button.danger-fill {
+  background-color: var(--danger);
+  border-color: var(--danger);
+  color: #fff;
+}
+
+button.danger-fill:hover {
+  background-color: var(--danger-hover);
+  border-color: var(--danger-hover);
+}
+
+/* 文字按钮：三级操作 */
+button.ghost {
+  background: transparent;
+  border-color: transparent;
+  color: var(--text-secondary);
+}
+
+button.ghost:hover {
+  background-color: var(--surface-2);
+  color: var(--text);
+}
+
+/* —— 表单控件 —— */
+input,
+select {
+  font-family: inherit;
+  font-size: 13.5px;
+  color: var(--text);
+  background-color: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 7px 10px;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+input:hover,
+select:hover {
+  border-color: var(--text-muted);
+}
+
+input:focus,
+select:focus {
+  outline: none;
+  border-color: var(--brand);
+  box-shadow: 0 0 0 3px var(--brand-soft);
+}
+
+input::placeholder {
+  color: var(--text-muted);
+}

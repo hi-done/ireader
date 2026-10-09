@@ -1,0 +1,35 @@
+# 依赖
+node_modules
+
+# 构建产物：不入库；安装包经 GitHub Releases 附件分发（见 README「打包发布」）
+dist
+dist-electron
+dist-ssr
+release
+*.local
+
+# 打包产物散件，防止误提交
+*.dmg
+*.exe
+*.app
+*.blockmap
+
+# 日志
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# 编辑器与系统文件
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
