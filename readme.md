@@ -13,7 +13,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-F0C929?style=flat-square)](./LICENSE)
 ![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows-grey?style=flat-square)
 
-![文库主页](pics/主页.png)
+![文库主页](pics/主页.webp)
 
 *文库主页 —— 导入、搜索、排序与合集，一屏尽收*
 
@@ -34,21 +34,21 @@
 <table>
   <tr>
     <td width="50%" align="center">
-      <img src="pics/阅读界面（带设置）.png" alt="沉浸阅读器" /><br/>
+      <img src="pics/阅读界面（带设置）.webp" alt="沉浸阅读器" /><br/>
       <sub><b>阅读器 · 工具栏</b> —— 顶栏切换双页 / 阅读方向 / 缩放与全屏，底栏滑块即拖即翻</sub>
     </td>
     <td width="50%" align="center">
-      <img src="pics/阅读界面2（设置隐藏）.png" alt="沉浸模式" /><br/>
+      <img src="pics/阅读界面2（设置隐藏）.webp" alt="沉浸模式" /><br/>
       <sub><b>沉浸模式</b> —— 工具栏自动隐藏，纯黑视口贴满屏幕，只剩漫画本身</sub>
     </td>
   </tr>
   <tr>
     <td width="50%" align="center">
-      <img src="pics/合集.png" alt="合集视图" /><br/>
+      <img src="pics/合集.webp" alt="合集视图" /><br/>
       <sub><b>合集视图</b> —— 立体书「继续阅读」侧栏，在集内书单中切换焦点、点击封面即续读</sub>
     </td>
     <td width="50%" align="center">
-      <img src="pics/设置.png" alt="设置" /><br/>
+      <img src="pics/设置.webp" alt="设置" /><br/>
       <sub><b>设置</b> —— 阅读偏好与外观，主题支持浅色 / 深色 / 跟随系统</sub>
     </td>
   </tr>
