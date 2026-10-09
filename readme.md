@@ -61,7 +61,7 @@
 | 平台 | 安装包 | 状态 |
 | --- | --- | --- |
 | macOS 12+（Apple Silicon 已验收） | `IReader-<版本>-mac.dmg` | ✅ 可用 |
-| Windows 10+ | `IReader-<版本>-win.exe` | 🔧 配置就绪，待实机验收 |
+| Windows 10+ | `IReader-<版本>-win.exe` | ⚙️ CI 自动构建，待实机验收 |
 
 > **macOS 未签名说明**：当前构建跳过代码签名（`identity: null`），首次打开若被 Gatekeeper 拦截，在应用上**右键 →「打开」**放行一次即可。
 
@@ -201,16 +201,17 @@ npm run build      # 类型检查 → vite 构建 → electron-builder
 
 ### 发布到 GitHub Releases
 
-安装包不进 git 仓库（`.gitignore` 已忽略 `release/`），而是作为 Release 附件分发：
+安装包不进 git 仓库（`.gitignore` 已忽略 `release/`），由 **GitHub Actions 自动构建并发布**：推送 `v*` 格式的版本 tag 即触发——先跑类型检查与测试，再在 macOS / Windows 双平台构建，产物自动挂到 Release 并生成更新说明。
 
 ```bash
-npm run build                                        # 1. 本地构建
-gh release create v<版本号> \
-  "release/<版本号>/IReader-<版本号>-mac.dmg" \
-  --title "v<版本号>" --notes "更新说明"              # 2. 创建 Release 并上传附件
+# 1. 修改 package.json 中的 version（须与 tag 一致）后提交，再打 tag 推送：
+npm version patch          # 或 minor / major：自动改版本号并打 vx.y.z tag（要求工作区干净）
+git push origin main --follow-tags
+# 2. 到仓库 Actions 页看构建进度，完成后 Release 自动出现在 Releases 页
 ```
 
-也可以在 GitHub 仓库页 → **Releases** → **Draft a new release**：填写 tag（如 `v1.0.0`）、拖入 DMG 后发布，README 顶部的 Releases 链接即可供人下载。
+本地手动构建（备选）：`npm run build` 后执行
+`gh release create v<版本号> "release/<版本号>/IReader-<版本号>-mac.dmg" --title "v<版本号>" --notes "更新说明"`。
 
 ## 📄 许可证
 
