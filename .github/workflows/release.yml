@@ -87,5 +87,5 @@ jobs:
         with:
           files: |
             release/**/*.dmg
-            release/**/*.exe
+            release/*/IReader-*-win.exe
           generate_release_notes: true
