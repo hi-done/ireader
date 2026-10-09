@@ -203,11 +203,32 @@ npm run build      # 类型检查 → vite 构建 → electron-builder
 
 安装包不进 git 仓库（`.gitignore` 已忽略 `release/`），由 **GitHub Actions 自动构建并发布**：推送 `v*` 格式的版本 tag 即触发——先跑类型检查与测试，再在 macOS / Windows 双平台构建，产物自动挂到 Release 并生成更新说明。
 
+**标准发版流程**（要求 git 工作区干净）：
+
 ```bash
-# 1. 修改 package.json 中的 version（须与 tag 一致）后提交，再打 tag 推送：
-npm version patch          # 或 minor / major：自动改版本号并打 vx.y.z tag（要求工作区干净）
+# 1. 提升版本号，按改动性质三选一（自动改 package.json 的 version →
+#    自动 commit（message 为版本号）→ 自动打 v 前缀 tag，无需手写版本号）：
+npm version patch          # 修订号 +1，bug 修复          1.0.1 → 1.0.2
+npm version minor          # 次版本 +1，新功能且兼容      1.0.1 → 1.1.0
+npm version major          # 主版本 +1，破坏性改动        1.0.1 → 2.0.0
+
+# 2. 推送分支与 tag（tag 是触发自动发布的开关）：
 git push origin main --follow-tags
-# 2. 到仓库 Actions 页看构建进度，完成后 Release 自动出现在 Releases 页
+
+# 3. 盯进度与验收：
+gh run list --workflow Release --limit 1   # 查最新构建状态（记下 run-id）
+gh run watch <run-id> --exit-status        # 可选：终端实时盯进度
+gh release view v<新版本号>                 # 构建完校验 Release 与双平台产物
+```
+
+构建约 5～10 分钟，进度也可在仓库 **Actions** 页查看；完成后 Release 自动出现在 Releases 页。
+
+**发版失败需要重跑时**（tag 指向旧 commit，Actions 页 re-run 无效，须重打 tag）：
+
+```bash
+git push origin :refs/tags/vx.y.z   # 删除远程旧 tag
+git tag -f vx.y.z                   # 本地把 tag 重打到修复后的最新 commit
+git push origin vx.y.z              # 单独推 tag，重新触发构建
 ```
 
 本地手动构建（备选）：`npm run build` 后执行
