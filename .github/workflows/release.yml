@@ -75,7 +75,9 @@ jobs:
         run: npm ci
 
       - name: 构建安装包
-        run: npm run build
+        # --publish never：禁止 electron-builder 在 CI + tag 环境下自动发布（默认 onTagOrDraft，
+        # 无 GH_TOKEN 会报错）；发布统一交给下一步 action-gh-release
+        run: npm run build -- --publish never
         env:
           # 配置已 identity: null，此变量让 electron-builder 在 CI 上彻底跳过签名搜寻
           CSC_IDENTITY_AUTO_DISCOVERY: false
