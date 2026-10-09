@@ -6,7 +6,7 @@
 
 导入 · 合集 · 沉浸阅读 · 断点续读 —— 你的漫画收藏，只属于你自己的电脑
 
-[![Electron](https://img.shields.io/badge/Electron-30-47848F?style=flat-square&logo=electron&logoColor=white)](https://www.electronjs.org/)
+[![Electron](https://img.shields.io/badge/Electron-42-47848F?style=flat-square&logo=electron&logoColor=white)](https://www.electronjs.org/)
 [![Vue](https://img.shields.io/badge/Vue-3-4FC08D?style=flat-square&logo=vuedotjs&logoColor=white)](https://vuejs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5-3178C6?style=flat-square&logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
 [![SQLite](https://img.shields.io/badge/SQLite-WAL-003B57?style=flat-square&logo=sqlite&logoColor=white)](https://www.sqlite.org/)
@@ -61,9 +61,11 @@
 | 平台 | 安装包 | 状态 |
 | --- | --- | --- |
 | macOS 12+（Apple Silicon 已验收） | `IReader-<版本>-mac.dmg` | ✅ 可用 |
-| Windows 10+ | `IReader-<版本>-win.exe` | ⚙️ CI 自动构建，待实机验收 |
+| Windows 10+（已验收） | `IReader-<版本>-win.exe` | ✅ 可用 |
 
 > **macOS 未签名说明**：当前构建跳过代码签名（`identity: null`），首次打开若被 Gatekeeper 拦截，在应用上**右键 →「打开」**放行一次即可。
+>
+> **Windows 未签名说明**：安装包未签名，首次运行若被 SmartScreen 拦截，点击「更多信息」→「仍要运行」即可放行。
 
 ## ⌨️ 快捷键
 
@@ -124,7 +126,7 @@
 
 | 层 | 技术 |
 | --- | --- |
-| 桌面框架 | Electron 30 |
+| 桌面框架 | Electron 42 |
 | 前端 | Vue 3 + TypeScript + Pinia + Vue Router，Vite 5 构建（vite-plugin-electron） |
 | PDF 渲染 | pdfjs-dist 4.x（渲染进程 worker 解析 → canvas） |
 | 数据库 | better-sqlite3 12.x（主进程内嵌 SQLite，WAL 模式） |
@@ -197,7 +199,7 @@ npm run build      # 类型检查 → vite 构建 → electron-builder
 
 - macOS 当前**跳过代码签名**（`identity: null`）：首次打开如被 Gatekeeper 拦截，右键应用 →「打开」放行一次即可
 - `asarUnpack` 已含 `better-sqlite3`（.node 原生二进制不能从 asar 内加载）
-- Windows NSIS 目标已配置，本仓库尚未在 Windows 机器验收
+- Windows NSIS 目标已配置并完成实机验收
 
 ### 发布到 GitHub Releases
 
