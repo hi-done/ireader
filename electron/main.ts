@@ -39,6 +39,8 @@ function createWindow() {
     width: 1280,
     height: 800,
     backgroundColor: '#000000',
+    // 窗口标题栏左上角与任务栏图标（开发模式同样生效；打包后 exe 图标由 electron-builder win.icon 内嵌）
+    icon: path.join(process.env.VITE_PUBLIC!, 'icon.png'),
     // macOS 隐藏原生标题栏（内容延伸到窗口顶，保留红绿灯）；Windows 保留默认标题栏以提供窗口控制按钮
     titleBarStyle: process.platform === 'darwin' ? 'hidden' : 'default',
     webPreferences: {

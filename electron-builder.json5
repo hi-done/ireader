@@ -27,6 +27,8 @@
     "artifactName": "${productName}-Mac-${version}-${arch}-Installer.${ext}"
   },
   "win": {
+    // exe/任务栏/窗口左上角图标：electron-builder 会把 png 自动转成多尺寸 ico 内嵌
+    "icon": "build/icon.png",
     "target": [
       {
         "target": "nsis",
