@@ -1,7 +1,7 @@
 {
   "name": "ireader",
   "private": true,
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "IReader - 离线本地漫画 PDF 阅读器",
   "author": "IReader",
   "type": "module",
