@@ -622,8 +622,12 @@ export async function installPaginatedNavigation(rendition: EpubRendition): Prom
       if (!prevPrev) return origPrev.call(this)
       manager!.clear?.()
       manager!.updateLayout?.()
-      return Promise.resolve(manager!.prepend?.(prevPrev))
-        .then(() => manager!.prepend?.(prev))
+      // prepend 是 insertBefore(容器首子元素)，因此必须「先后页再前页」：
+      // 先 prepend(prev) 得 [prev]，再 prepend(prevPrev) 得 [prevPrev, prev]，
+      // 视觉顺序才是 prevPrev 左、prev 右（与原生 prev 一致）。顺序颠倒会得
+      // [prev, prevPrev]，scrollTo 滚到末尾只露出右半边一页——症状即「上一页只翻一页」。
+      return Promise.resolve(manager!.prepend?.(prev))
+        .then(() => manager!.prepend?.(prevPrev))
         .then(() => {
           if (manager!.isPaginated && manager!.settings?.axis === 'horizontal') {
             if (manager!.settings.direction === 'rtl') {
