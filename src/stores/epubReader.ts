@@ -7,9 +7,12 @@ import {
   displayPageIndex,
   generateLocations,
   installPrePaginatedFit,
+  installPaginatedNavigation,
+  instrumentNavigation,
   loadEpubBook,
   positionFromLocation,
   pushCoverDiag,
+  pushNavDiag,
   renderEpub,
   type EpubBook,
   type EpubDirection,
@@ -124,12 +127,21 @@ export const useEpubReaderStore = defineStore('epubReader', () => {
     })
     rendition = r
     r.on('relocated', onRelocated)
+    // DEV 导航插桩：包装 manager.next/prev 记录内部状态快照（等 started 后安装）
+    void instrumentNavigation(r)
     if (detectedLayout === 'pre-paginated') {
       // 图片型书：每页渲染后按视口自适应缩放（epub.js fit 对无 viewport 的书失效）；
       // 双页贴中线消间隙、单页居中
-      installPrePaginatedFit(r, { getZoom: () => zoom.value, getSpread: () => spread.value })
+      installPrePaginatedFit(r, {
+        getZoom: () => zoom.value,
+        getSpread: () => spread.value,
+        getTotalPages: () => spinePageCount(),
+        getCoverSingle: () => settingsStore.settings.coverSinglePage,
+      })
       // 全局设置：双页模式封面是否单独成页（内部等待 rendition.started 后 patch）
       await applyCoverSinglePage(r, settingsStore.settings.coverSinglePage)
+      // pre-paginated 翻页直通：绕开依赖容器滚动位置的 next/prev 判定
+      await installPaginatedNavigation(r)
       pushCoverDiag(
         `open cover=${settingsStore.settings.coverSinglePage} spread=${spreadValue} dir=${directionValue}`
       )
@@ -151,6 +163,11 @@ export const useEpubReaderStore = defineStore('epubReader', () => {
       await r.display()
     }
     ready.value = true
+    pushCoverDiag(
+      `[open] id=${numId} layout=${detectedLayout} spread=${spreadValue} dir=${directionValue} ` +
+        `cover=${settingsStore.settings.coverSinglePage} pct=${progress?.percentage ?? 'none'} ` +
+        `cfi=${progress?.cfi ? 'yes' : 'no'}`
+    )
 
     if (detectedLayout === 'pre-paginated') {
       // 图片型书每 section 一页：无需文本分块 locations，页码指示/滑块直接可用
@@ -200,11 +217,33 @@ export const useEpubReaderStore = defineStore('epubReader', () => {
   }
 
   function next() {
-    rendition?.next().catch((e) => console.error('[epub] 下一页失败', e))
+    const r = rendition
+    if (!r) {
+      pushNavDiag('[nav] store.next no rendition')
+      return
+    }
+    pushNavDiag('[nav] store.next enter')
+    r.next()
+      .then(() => pushNavDiag('[nav] store.next ok'))
+      .catch((e) => {
+        pushNavDiag(`[nav] store.next error ${e instanceof Error ? e.message : String(e)}`)
+        console.error('[epub] 下一页失败', e)
+      })
   }
 
   function prev() {
-    rendition?.prev().catch((e) => console.error('[epub] 上一页失败', e))
+    const r = rendition
+    if (!r) {
+      pushNavDiag('[nav] store.prev no rendition')
+      return
+    }
+    pushNavDiag('[nav] store.prev enter')
+    r.prev()
+      .then(() => pushNavDiag('[nav] store.prev ok'))
+      .catch((e) => {
+        pushNavDiag(`[nav] store.prev error ${e instanceof Error ? e.message : String(e)}`)
+        console.error('[epub] 上一页失败', e)
+      })
   }
 
   function goTo(index: number) {
