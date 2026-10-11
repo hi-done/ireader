@@ -39,7 +39,7 @@ export const useReaderStore = defineStore('reader', () => {
 
     const result = await ipc.reader.open(id)
     bookId.value = id
-    const loaded = await loadPdfWithTask(result.pdfUrl)
+    const loaded = await loadPdfWithTask(result.fileUrl)
     loadingTask = loaded.task
     doc.value = markRaw(loaded.doc)
     numPages.value = result.numPages || loaded.doc.numPages

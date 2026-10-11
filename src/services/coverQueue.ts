@@ -1,8 +1,9 @@
-// 前端封面生成队列：导入后逐本用 pdf.js 渲染第 1 页 → cover:submit 回传主进程落盘
+// 前端封面生成队列：导入后逐本渲染封面 → cover:submit 回传主进程落盘
+// PDF 用 pdf.js 渲染第 1 页；EPUB 用 epubjs 提取封面图
 // 对应设计文档 §4.1 / §8.1：队列空闲时执行、不阻塞 UI；失败的书使用占位封面，不影响阅读
 
 import { reactive } from 'vue'
-import type { Book } from '../../shared/types'
+import type { Book, BookFormat } from '../../shared/types'
 import { ipc } from './ipc'
 import { loadPdfWithTask, renderCoverThumbnail } from './pdf'
 
@@ -39,16 +40,59 @@ export const coverQueueState = reactive<CoverQueueState>({
 const queuedIds = new Set<number>()
 let running = false
 
-async function processOne(bookId: number, title: string): Promise<void> {
-  coverQueueState.currentTitle = title
-  let task = null
+/** 提取 EPUB 封面并转成 JPEG（缩到宽 480；无封面时抛错走占位逻辑） */
+async function renderEpubCoverJpeg(url: string): Promise<ArrayBuffer> {
+  // 动态导入：epubjs 仅 EPUB 书需要，避免污染模块加载与单测环境
+  const { default: ePub } = await import('epubjs')
+  // ireader:// URL 没有 .epub 扩展名，先 fetch 成 ArrayBuffer 再交给 epub.js，绕开其按扩展名猜类型的逻辑
+  const res = await fetch(url)
+  if (!res.ok) throw new Error(`加载 EPUB 失败（HTTP ${res.status}）`)
+  const data = await res.arrayBuffer()
+  const book = ePub(data)
   try {
+    await book.ready
+    const coverUrl = await book.coverUrl()
+    if (!coverUrl) throw new Error('EPUB 无封面')
+    const img = new Image()
+    img.src = coverUrl
+    await img.decode()
+    const targetWidth = 480
+    const scale = Math.min(1, targetWidth / (img.naturalWidth || 1))
+    const canvas = document.createElement('canvas')
+    canvas.width = Math.max(1, Math.round(img.naturalWidth * scale))
+    canvas.height = Math.max(1, Math.round(img.naturalHeight * scale))
+    const ctx = canvas.getContext('2d')
+    if (!ctx) throw new Error('Canvas 2D context unavailable')
+    ctx.drawImage(img, 0, 0, canvas.width, canvas.height)
+    const blob: Blob = await new Promise((resolve, reject) => {
+      canvas.toBlob(
+        (b) => (b ? resolve(b) : reject(new Error('toBlob failed'))),
+        'image/jpeg',
+        0.8
+      )
+    })
+    return blob.arrayBuffer()
+  } finally {
+    book.destroy()
+  }
+}
+
+async function processOne(bookId: number, title: string, format: BookFormat): Promise<void> {
+  coverQueueState.currentTitle = title
+  let task: { destroy: () => Promise<void> } | null = null
+  try {
+    if (format === 'epub') {
+      const image = await renderEpubCoverJpeg(`ireader://epub/${bookId}`)
+      // EPUB 分页数依赖视口、导入时未知，total_pages 保持 0，进度展示走 percentage
+      await ipc.cover.submit(bookId, image, 0)
+      return
+    }
     const loaded = await loadPdfWithTask(`ireader://pdf/${bookId}`)
     task = loaded.task
     const image = await renderCoverThumbnail(loaded.doc)
     await ipc.cover.submit(bookId, image, loaded.doc.numPages)
   } catch (e) {
-    // 单本失败（损坏/加密 PDF 等）：跳过，占位封面，不中断队列；但必须留痕
+    // 单本失败（损坏/加密文件、无封面等）：跳过，占位封面，不中断队列；但必须留痕
     console.error(`[coverQueue] 生成封面失败 bookId=${bookId}`, e)
   } finally {
     await task?.destroy().catch(() => undefined)
@@ -59,25 +103,27 @@ async function processOne(bookId: number, title: string): Promise<void> {
 async function drain(): Promise<void> {
   running = true
   while (queue.length) {
-    const { id, title } = queue.shift()!
+    const { id, title, format } = queue.shift()!
     queuedIds.delete(id)
-    await processOne(id, title)
+    await processOne(id, title, format)
     coverQueueState.done++
     coverQueueState.pending = queue.length
   }
   running = false
 }
 
-const queue: { id: number; title: string }[] = []
+const queue: { id: number; title: string; format: BookFormat }[] = []
 
 /** 将书籍加入封面生成队列；已在队列/正在处理的书自动去重 */
-export function enqueueCovers(books: Pick<Book, 'id' | 'title' | 'coverUrl' | 'totalPages'>[]): void {
+export function enqueueCovers(
+  books: Pick<Book, 'id' | 'title' | 'coverUrl' | 'totalPages' | 'format'>[]
+): void {
   const fresh = books.filter((b) => needsCoverGeneration(b) && !queuedIds.has(b.id))
   if (!fresh.length) return
 
   for (const b of fresh) {
     queuedIds.add(b.id)
-    queue.push({ id: b.id, title: b.title })
+    queue.push({ id: b.id, title: b.title, format: b.format })
   }
   coverQueueState.pending = queue.length
   coverQueueState.total = coverQueueState.pending

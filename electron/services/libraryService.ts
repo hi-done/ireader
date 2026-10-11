@@ -9,10 +9,15 @@ import { progressRepo, toReadingProgress } from '../db/repos/progressRepo'
 import type { Book } from '../../shared/types'
 import { getCoverUrl } from './coverService'
 
-const PDF_EXT = '.pdf'
+const SUPPORTED_EXTS = ['.pdf', '.epub']
 
-/** 递归展开文件/文件夹路径为去重后的 PDF 绝对路径列表 */
-function collectPdfPaths(inputPaths: string[]): string[] {
+/** 按扩展名派生书格式（未知扩展名按 PDF 处理，兼容旧数据） */
+export function detectFormat(filePath: string): Book['format'] {
+  return path.extname(filePath).toLowerCase() === '.epub' ? 'epub' : 'pdf'
+}
+
+/** 递归展开文件/文件夹路径为去重后的 PDF/EPUB 绝对路径列表 */
+function collectBookPaths(inputPaths: string[]): string[] {
   const result = new Set<string>()
 
   function walk(p: string) {
@@ -30,7 +35,10 @@ function collectPdfPaths(inputPaths: string[]): string[] {
         if (entry.isSymbolicLink()) continue // 防环：跳过符号链接
         walk(path.join(real, entry.name))
       }
-    } else if (stat.isFile() && path.extname(real).toLowerCase() === PDF_EXT) {
+    } else if (
+      stat.isFile() &&
+      SUPPORTED_EXTS.includes(path.extname(real).toLowerCase())
+    ) {
       result.add(real)
     }
   }
@@ -46,6 +54,7 @@ function rowToBook(row: BookRow): Book {
     id: row.id,
     title: row.title,
     filePath: row.file_path,
+    format: detectFormat(row.file_path),
     fileSize: row.file_size,
     totalPages: row.total_pages,
     coverUrl: row.cover_path ? getCoverUrl(row.id) : null,
@@ -59,7 +68,7 @@ function rowToBook(row: BookRow): Book {
 
 export const libraryService = {
   /**
-   * 导入文件/文件夹列表，递归扫描 PDF 并按路径去重落库。
+   * 导入文件/文件夹列表，递归扫描 PDF/EPUB 并按路径去重落库。
    * collectionId 非 null 时新导入的书直接归属该合集（合集视图内导入）。
    */
   importPaths(
@@ -69,11 +78,11 @@ export const libraryService = {
     if (collectionId !== null && !collectionsRepo.exists(collectionId)) {
       throw { code: 'FILE_NOT_FOUND', message: 'collection not found' }
     }
-    const pdfPaths = collectPdfPaths(inputPaths)
+    const bookPaths = collectBookPaths(inputPaths)
     const added: Book[] = []
     let skipped = 0
 
-    for (const filePath of pdfPaths) {
+    for (const filePath of bookPaths) {
       if (booksRepo.findByPath(filePath)) {
         skipped++
         continue

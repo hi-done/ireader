@@ -60,7 +60,10 @@ defineEmits<{ open: [bookId: number]; remove: [bookId: number]; rename: [bookId:
 
 const progressPercent = computed(() => {
   const { progress, totalPages } = props.book
-  if (!progress || !totalPages) return null
+  if (!progress) return null
+  // EPUB 直接存百分比；PDF 按页数折算
+  if (progress.percentage != null) return Math.min(100, Math.round(progress.percentage))
+  if (!totalPages) return null
   return Math.min(100, Math.round((progress.page / totalPages) * 100))
 })
 

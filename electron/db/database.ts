@@ -55,6 +55,14 @@ const MIGRATIONS: Array<(db: Database.Database) => void> = [
       CREATE INDEX IF NOT EXISTS idx_books_collection ON books(collection_id);
     `)
   },
+
+  // v3: EPUB 阅读进度（CFI 定位 + 百分比；PDF 书两列保持 NULL）
+  (db) => {
+    db.exec(`
+      ALTER TABLE reading_progress ADD COLUMN cfi TEXT;
+      ALTER TABLE reading_progress ADD COLUMN percentage REAL;
+    `)
+  },
 ]
 
 /**

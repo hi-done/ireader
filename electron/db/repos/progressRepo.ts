@@ -12,6 +12,8 @@ export interface ProgressRow {
   zoom_mode: ZoomMode
   zoom_scale: number
   updated_at: number
+  cfi: string | null
+  percentage: number | null
 }
 
 export const progressRepo = {
@@ -24,11 +26,12 @@ export const progressRepo = {
   upsert(bookId: number, progress: ReadingProgress): void {
     getDatabase()
       .prepare(
-        `INSERT INTO reading_progress (book_id, page, mode, direction, zoom_mode, zoom_scale, updated_at)
-         VALUES (@bookId, @page, @mode, @direction, @zoomMode, @zoomScale, @updatedAt)
+        `INSERT INTO reading_progress (book_id, page, mode, direction, zoom_mode, zoom_scale, updated_at, cfi, percentage)
+         VALUES (@bookId, @page, @mode, @direction, @zoomMode, @zoomScale, @updatedAt, @cfi, @percentage)
          ON CONFLICT(book_id) DO UPDATE SET
            page = @page, mode = @mode, direction = @direction,
-           zoom_mode = @zoomMode, zoom_scale = @zoomScale, updated_at = @updatedAt`
+           zoom_mode = @zoomMode, zoom_scale = @zoomScale, updated_at = @updatedAt,
+           cfi = @cfi, percentage = @percentage`
       )
       .run({
         bookId,
@@ -38,6 +41,8 @@ export const progressRepo = {
         zoomMode: progress.zoom.mode,
         zoomScale: progress.zoom.scale,
         updatedAt: progress.updatedAt,
+        cfi: progress.cfi ?? null,
+        percentage: progress.percentage ?? null,
       })
   },
 }
@@ -45,6 +50,8 @@ export const progressRepo = {
 export function toReadingProgress(row: ProgressRow): ReadingProgress {
   return {
     page: row.page,
+    cfi: row.cfi,
+    percentage: row.percentage,
     mode: row.mode,
     direction: row.direction,
     zoom: { mode: row.zoom_mode, scale: row.zoom_scale },

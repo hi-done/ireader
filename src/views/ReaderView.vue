@@ -1,5 +1,15 @@
 <template>
-  <div ref="rootEl" class="reader-view" @wheel="onWheel" @mousemove="onMouseMove" @mousedown="onMouseDown" @mouseup="onMouseUp">
+  <!-- 按格式分发：EPUB 走独立阅读器，PDF 走下方 Canvas 阅读器（原有逻辑不动） -->
+  <EpubReaderView v-if="isEpub" :book-id="routeBookId" />
+  <div
+    v-else
+    ref="rootEl"
+    class="reader-view"
+    @wheel="onWheel"
+    @mousemove="onMouseMove"
+    @mousedown="onMouseDown"
+    @mouseup="onMouseUp"
+  >
     <header class="top-bar" :class="{ visible: barsVisible }">
       <button class="icon-btn" @click="goBack">← 返回</button>
       <span class="title">{{ bookTitle }}</span>
@@ -101,12 +111,20 @@ import { ipc } from '../services/ipc'
 import { getFromCache, putToCache, clearCache } from '../services/pageCache'
 import { playPageCurl, type PageCurlHandle } from '../services/pageCurl'
 import { renderPageToCanvas, type PdfDocument, type RenderPageOptions } from '../services/pdf'
+import EpubReaderView from './EpubReaderView.vue'
 
 const route = useRoute()
 const router = useRouter()
 const reader = useReaderStore()
 const library = useLibraryStore()
 const settingsStore = useSettingsStore()
+
+/** 当前路由书 id（NaN 表示无有效参数，仅在 reader 路由下有意义） */
+const routeBookId = computed(() => Number(route.params.bookId))
+/** 当前书是否为 EPUB（据此切换阅读器组件） */
+const isEpub = computed(
+  () => library.books.find((b) => b.id === routeBookId.value)?.format === 'epub'
+)
 
 const barsVisible = ref(false)
 let hideTimer: ReturnType<typeof setTimeout> | null = null
@@ -148,7 +166,27 @@ onMounted(async () => {
   window.addEventListener('keydown', onKeydown)
   window.addEventListener('resize', onResize)
   if (!settingsStore.loaded) await settingsStore.load()
-  await openBook(Number(route.params.bookId))
+  // 直达路由（冷启动）时文库可能未加载，先静默刷新以判断格式
+  if (library.books.length === 0) {
+    try {
+      await library.refresh({ silent: true })
+    } catch {
+      // 文库刷新失败不阻断阅读：按 PDF 路径走，失败由 reader.open 报错
+    }
+  }
+  if (isEpub.value) return // EPUB 由 EpubReaderView 自行打开
+  await openBook(routeBookId.value)
+})
+
+// 切换到 EPUB 时收尾 PDF 阅读器（落盘进度、销毁文档、清缓存），
+// 防止 v-else 分支销毁后旧 PDF 文档仍占用资源/进度未落盘
+watch(isEpub, (now) => {
+  if (now) {
+    reader.close()
+    clearCache()
+    curlHandle?.cancel()
+    loadError.value = ''
+  }
 })
 
 // 同一组件内切换书籍（上一本/下一本）：路由仅参数变化、组件复用，需重新加载；
@@ -164,6 +202,7 @@ watch(
 
 /** 按 bookId 打开（可重入：上一本/下一本切换走同一路由不同参数）。首调时 close 为空操作 */
 async function doOpen(id: number) {
+  if (isEpub.value) return // EPUB 不经过 PDF 打开链
   loadError.value = ''
   reader.close() // 落盘上一本进度（flushProgress）并销毁旧 PDF 文档
   clearCache() // 位图缓存属于上一本书
@@ -175,6 +214,7 @@ async function doOpen(id: number) {
  *  否则前一本书的进度落盘与文档销毁会丢失，且并发 open 完成顺序颠倒会停在错误的书上 */
 let openChain: Promise<void> = Promise.resolve()
 function openBook(id: number) {
+  if (isEpub.value) return // EPUB 由 EpubReaderView 处理，不进 PDF 链
   openChain = openChain.then(() => doOpen(id))
   void openChain
     .then(async () => {

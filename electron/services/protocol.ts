@@ -1,4 +1,4 @@
-// ireader:// 自定义协议：向渲染进程提供 PDF 原文件与封面图
+// ireader:// 自定义协议：向渲染进程提供 PDF/EPUB 原文件与封面图
 // 对应设计文档 §3.4 / §6.5
 
 import { net, protocol } from 'electron'
@@ -42,7 +42,7 @@ function withCors(res: Response): Response {
 export function registerProtocolHandler(): void {
   protocol.handle(IREADER_PROTOCOL, async (request) => {
     const url = new URL(request.url)
-    // url.hostname 对应 pdf | cover，url.pathname 对应 /{bookId}
+    // url.hostname 对应 pdf | epub | cover，url.pathname 对应 /{bookId}
     const kind = url.hostname
     const bookId = Number(url.pathname.replace(/^\//, ''))
 
@@ -50,7 +50,8 @@ export function registerProtocolHandler(): void {
       return new Response('Invalid book id', { status: 400 })
     }
 
-    if (kind === 'pdf') {
+    // pdf / epub 均直出原始文件：渲染进程按格式选择对应 host 读取
+    if (kind === 'pdf' || kind === 'epub') {
       const row = booksRepo.findById(bookId)
       if (!row || !fs.existsSync(row.file_path)) {
         return new Response('Not Found', { status: 404 })

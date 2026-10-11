@@ -6,9 +6,14 @@ export type Direction = 'ltr' | 'rtl' // ltr = 左→右（韩漫）  rtl = 右�
 export type ZoomMode = 'fitWidth' | 'fitHeight' | 'original' | 'custom'
 export type SortBy = 'lastOpenedAt' | 'addedAt' | 'title'
 export type SortOrder = 'asc' | 'desc'
+export type BookFormat = 'pdf' | 'epub'
 
 export interface ReadingProgress {
   page: number // 当前页组第一页页码，从 1 起
+  /** EPUB：断点续读的 CFI 定位（仅 epub 书使用） */
+  cfi?: string | null
+  /** EPUB：阅读进度百分比 0-100（供文库进度圆环，仅 epub 书使用） */
+  percentage?: number | null
   mode: ReadingMode
   direction: Direction
   zoom: { mode: ZoomMode; scale: number }
@@ -19,6 +24,8 @@ export interface Book {
   id: number
   title: string
   filePath: string
+  /** 文件格式，按扩展名派生 */
+  format: BookFormat
   fileSize: number
   totalPages: number
   coverUrl: string | null // ireader://cover/{id}
@@ -41,6 +48,8 @@ export interface Settings {
   theme: 'light' | 'dark' | 'system'
   preloadSpreads: number // 0-4
   coverSinglePage: boolean
+  /** EPUB 字号百分比（100 = 默认） */
+  epubFontSize: number
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -49,6 +58,7 @@ export const DEFAULT_SETTINGS: Settings = {
   theme: 'system',
   preloadSpreads: 2,
   coverSinglePage: true,
+  epubFontSize: 100,
 }
 
 export type ErrorCode =
@@ -81,7 +91,9 @@ export interface LibraryImportResult {
 }
 
 export interface ReaderOpenResult {
-  pdfUrl: string
+  format: BookFormat
+  /** ireader://pdf/{id} 或 ireader://epub/{id} 原始文件地址 */
+  fileUrl: string
   numPages: number
   progress: ReadingProgress | null
 }

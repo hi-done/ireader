@@ -15,8 +15,8 @@ const ireaderApi = {
   /** 宿主平台（darwin/win32…）：渲染层据此为无标题栏窗口做红绿灯避让 */
   platform: process.platform,
   dialog: {
-    pickPdfFiles: (): Promise<Result<string[] | null>> =>
-      ipcRenderer.invoke('dialog:pickPdfFiles'),
+    pickBookFiles: (): Promise<Result<string[] | null>> =>
+      ipcRenderer.invoke('dialog:pickBookFiles'),
     pickFolder: (): Promise<Result<string | null>> => ipcRenderer.invoke('dialog:pickFolder'),
   },
   library: {

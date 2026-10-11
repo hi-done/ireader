@@ -8,7 +8,7 @@
         <h1 class="hero-title">漫画文库</h1>
         <p class="hero-sub">本地离线阅读，随时接续上次的进度</p>
         <div class="hero-actions">
-          <button class="btn-primary" @click="onImportFiles">＋ 导入漫画</button>
+          <button class="btn-primary" @click="onImportFiles">＋ 导入书籍</button>
           <button class="hero-ghost" @click="onImportFolder">导入文件夹</button>
         </div>
       </div>
@@ -28,7 +28,7 @@
 
     <!-- 合集视图工具行：导入直入合集 / 从主页多选添加 -->
     <div v-if="activeCollection" class="toolbar collection-toolbar">
-      <button class="btn-primary" @click="onImportFiles">＋ 导入漫画</button>
+      <button class="btn-primary" @click="onImportFiles">＋ 导入书籍</button>
       <button @click="onImportFolder">导入文件夹</button>
       <button @click="addFromHome = true">从主页添加</button>
     </div>
@@ -138,7 +138,7 @@
     <section v-else class="state-tip empty">
       <p>{{ library.keyword ? '没有匹配的书' : '文库还是空的' }}</p>
       <div v-if="!library.keyword" class="empty-actions">
-        <button class="btn-primary" @click="onImportFiles">导入漫画</button>
+        <button class="btn-primary" @click="onImportFiles">导入书籍</button>
         <button class="ghost" @click="onImportFolder">导入文件夹</button>
       </div>
     </section>
@@ -259,7 +259,7 @@ onUnmounted(() => {
 
 // —— 导入（主页导入到未分组；合集视图内导入直接归属当前合集） ——
 async function onImportFiles() {
-  const paths = await ipc.dialog.pickPdfFiles()
+  const paths = await ipc.dialog.pickBookFiles()
   if (paths && paths.length) await importAndReport(paths, activeCollectionId.value)
 }
 
@@ -330,7 +330,7 @@ async function relinkMissing() {
   const book = missingBook.value
   missingBook.value = null
   if (!book) return
-  const paths = await ipc.dialog.pickPdfFiles()
+  const paths = await ipc.dialog.pickBookFiles()
   if (!paths?.length) return
   await library.relink(book.id, paths[0])
   showToast(`已重新定位《${book.title}》`)

@@ -41,12 +41,12 @@ function notifyLibraryChanged(win: BrowserWindow | null, payload: LibraryChanged
 }
 
 export function registerIpcHandlers(getWin: () => BrowserWindow | null): void {
-  ipcMain.handle('dialog:pickPdfFiles', async () => {
+  ipcMain.handle('dialog:pickBookFiles', async () => {
     const win = getWin()
     if (!win) return ok(null)
     const { canceled, filePaths } = await dialog.showOpenDialog(win, {
       properties: ['openFile', 'multiSelections'],
-      filters: [{ name: 'PDF', extensions: ['pdf'] }],
+      filters: [{ name: '电子书', extensions: ['pdf', 'epub'] }],
     })
     return ok(canceled ? null : filePaths)
   })
@@ -135,7 +135,8 @@ export function registerIpcHandlers(getWin: () => BrowserWindow | null): void {
       }
       libraryService.markOpened(bookId)
       return {
-        pdfUrl: `ireader://pdf/${bookId}`,
+        format: book.format,
+        fileUrl: `ireader://${book.format}/${bookId}`,
         numPages: book.totalPages,
         progress: book.progress,
       }

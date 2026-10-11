@@ -2,7 +2,7 @@
 
 # 📚 IReader
 
-**纯离线的本地漫画 PDF 阅读器**
+**纯离线的本地漫画阅读器（PDF / EPUB）**
 
 导入 · 合集 · 沉浸阅读 · 断点续读 —— 你的漫画收藏，只属于你自己的电脑
 
@@ -24,6 +24,7 @@
 ## ✨ 功能亮点
 
 - 📴 **纯离线** — 零网络请求，书籍、封面与进度全部存于本机；`ireader://` 自定义协议按 id 分发文件，不暴露本地路径
+- 📚 **多格式支持** — 导入 PDF 与 EPUB 两种格式，共用文库、合集与断点续读；PDF 走 pdf.js canvas 渲染管线，EPUB 走 epub.js 分页排版（图片型漫画书双页并排，文字型书流式分页），同一套阅读偏好与快捷键
 - 📖 **沉浸阅读** — 单页 / 双页排版，日漫（右→左）与韩漫（左→右）两种方向，canvas 自绘的仿真纸张卷曲翻页动画；纯黑视口贴满屏幕，顶底栏靠近边缘唤出、自动隐藏
 - 🔖 **断点续读** — 每本书独立记录页码、阅读模式、方向与缩放，重新打开即回到上次离开的位置
 - 🗂️ **合集管理** — 按系列收纳漫画，一本书同一时刻只属于一个合集；集内可直接导入，从主页模糊搜索 + 全选添加
@@ -85,7 +86,7 @@
 
 #### 文库（主页）
 
-- **导入**：多选 PDF 文件，或选择文件夹递归扫描（跳过隐藏目录与符号链接）；按规范化绝对路径去重
+- **导入**：多选 PDF / EPUB 文件，或选择文件夹递归扫描（跳过隐藏目录与符号链接）；按规范化绝对路径去重，格式由扩展名自动识别
 - **封面**：导入后由封面队列逐本渲染第 1 页落盘（480px JPEG），渐进上屏；失败显示占位图
 - **卡片**：封面、书名、阅读进度（百分比 + 进度条）、最近阅读时间
 - **排序**：最近阅读（默认）/ 添加时间 / 书名，偏好持久化
@@ -106,6 +107,7 @@
 - **缩放**：适宽 / 适高（默认，页面贴满视口）/ 原始 100% / 自定义 25%–400%（`Ctrl/Cmd+滚轮` 或 `=`/`-` 步进 10%）；超出视口可拖拽平移
 - **翻页动画**：canvas 自绘仿真纸张卷曲（450ms，折缝阴影与纸边高光），连翻自动取消上一层；遵循 `prefers-reduced-motion`
 - **渲染管线**：离屏 canvas → LRU 位图缓存（12 张，含渲染签名）→ 贴图上屏；后台按设置预取前后 0–4 组
+- **EPUB 阅读**：epub.js 分页排版；图片型漫画书双页并排贴中线（封面单页居中），缩放档位 50%–200%；文字型书流式分页 + 字号档位；断点续读恢复排版状态（单/双页、方向、字号/缩放）
 - **性能保护**：滑块跨多页拖动零渲染开销（松手后并行渲染双页），作废渲染循环的迟到结果只入缓存不上屏
 
 #### 设置
@@ -129,6 +131,7 @@
 | 桌面框架 | Electron 42 |
 | 前端 | Vue 3 + TypeScript + Pinia + Vue Router，Vite 5 构建（vite-plugin-electron） |
 | PDF 渲染 | pdfjs-dist 4.x（渲染进程 worker 解析 → canvas） |
+| EPUB 渲染 | epubjs 0.3.x（渲染进程解包 → 分页排版；图片型书自适应缩放） |
 | 数据库 | better-sqlite3 12.x（主进程内嵌 SQLite，WAL 模式） |
 | 打包 | electron-builder 24（macOS DMG / Windows NSIS） |
 | 测试 | Vitest 1.x（页组划分、封面队列等纯逻辑，15 个用例） |
@@ -140,34 +143,35 @@ Electron 双进程，前后端分离：
 ```
 渲染进程（Vue 3 SPA）
   文库 / 阅读器 / 设置 三路由
-  pdf.js worker → 离屏 canvas → LRU 缓存 → 上屏
+  PDF：pdf.js worker → 离屏 canvas → LRU 缓存 → 上屏
+  EPUB：epub.js 解包 → 分页渲染（图片型书按 spine 页模型）
         ▲ IPC（contextBridge 类型安全 API，contextIsolation + sandbox）
 主进程（Node.js）
   文库 / 合集 / 进度 / 设置服务，封面落盘，日志
-  ireader:// 自定义协议（按 id 提供 PDF 与封面，不暴露文件路径）
+  ireader:// 自定义协议（按 id 提供 PDF / EPUB 与封面，不暴露文件路径）
         ▲
   {userData}/ireader.db（SQLite WAL）+ {userData}/covers/
 ```
 
 ```
 ├── electron/          # 主进程：main / preload / db(repos+迁移) / services / ipc
-├── src/               # 渲染进程：views / stores / services(pdf·pageCache·pageCurl·spread) / components
+├── src/               # 渲染进程：views / stores / services(pdf·epub·pageCache·pageCurl·spread) / components
 ├── shared/types.ts    # 前后端共享类型（Book / Collection / Settings / Result…）
 ├── pics/              # 界面截图
 └── build/             # 打包资源（icon 等）
 ```
 
-安全基线：渲染进程沙箱启用、`contextIsolation: true`、`nodeIntegration: false`；本地文件只能经 `ireader://pdf/{id}`、`ireader://cover/{id}` 按 id 获取。
+安全基线：渲染进程沙箱启用、`contextIsolation: true`、`nodeIntegration: false`；本地文件只能经 `ireader://pdf/{id}`、`ireader://epub/{id}`、`ireader://cover/{id}` 按 id 获取。
 
 <details>
 <summary><b>🗄️ 数据模型（SQLite，增量迁移）</b></summary>
 
-- `books`：书名、规范化路径（唯一）、页数、封面路径、添加 / 最近阅读时间、`collection_id`（NULL = 未分组）
+- `books`：书名、格式（由扩展名派生）、规范化路径（唯一）、页数、封面路径、添加 / 最近阅读时间、`collection_id`（NULL = 未分组）
 - `collections`：合集（id、标题、创建时间）
-- `reading_progress`：每本书一条（页码、模式、方向、缩放，变更防抖 1s 保存，退出强制落盘）
+- `reading_progress`：每本书一条（页码、模式、方向、缩放、cfi/percentage（EPUB 定位），变更防抖 1s 保存，退出强制落盘）
 - `settings`：key-value（JSON）
 
-迁移用 `PRAGMA user_version` 版本号 + 顺序脚本（当前 v2：合集表与书籍归属列），只追加不回改。
+迁移用 `PRAGMA user_version` 版本号 + 顺序脚本（当前 v3：合集表与书籍归属列、阅读进度 cfi/percentage 列），只追加不回改。
 
 </details>
 

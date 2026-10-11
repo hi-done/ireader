@@ -23,7 +23,7 @@ function api() {
 
 export const ipc = {
   dialog: {
-    pickPdfFiles: () => unwrap(api().dialog.pickPdfFiles()),
+    pickBookFiles: () => unwrap(api().dialog.pickBookFiles()),
     pickFolder: () => unwrap(api().dialog.pickFolder()),
   },
   library: {
