@@ -39,6 +39,8 @@ function createWindow() {
     width: 1280,
     height: 800,
     backgroundColor: '#000000',
+    // 窗口标题附带版本号（app.getVersion() 读取 package.json 的 version，开发与打包模式一致）
+    title: `IReader v${app.getVersion()}`,
     // 窗口标题栏左上角与任务栏图标（开发模式同样生效；打包后 exe 图标由 electron-builder win.icon 内嵌）
     icon: path.join(process.env.VITE_PUBLIC!, 'icon.png'),
     // macOS 隐藏原生标题栏（内容延伸到窗口顶，保留红绿灯）；Windows 保留默认标题栏以提供窗口控制按钮
@@ -50,6 +52,9 @@ function createWindow() {
       sandbox: true,
     },
   })
+
+  // 页面的 <title> 更新会覆盖窗口标题，阻止它以保证标题始终为「IReader v版本号」
+  win.on('page-title-updated', (e) => e.preventDefault())
 
   if (VITE_DEV_SERVER_URL) {
     win.loadURL(VITE_DEV_SERVER_URL)
