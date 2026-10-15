@@ -63,6 +63,21 @@ const MIGRATIONS: Array<(db: Database.Database) => void> = [
       ALTER TABLE reading_progress ADD COLUMN percentage REAL;
     `)
   },
+
+  // v4: 阅读时长统计（日粒度聚合：每本书每天一行，毫秒累加；删书级联清除）
+  (db) => {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS reading_stats (
+        book_id     INTEGER NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+        day         TEXT    NOT NULL,
+        duration_ms INTEGER NOT NULL DEFAULT 0,
+        updated_at  INTEGER NOT NULL,
+        PRIMARY KEY (book_id, day)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_reading_stats_day ON reading_stats(day);
+    `)
+  },
 ]
 
 /**

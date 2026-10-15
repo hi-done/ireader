@@ -103,3 +103,44 @@ export type LibraryChangedPayload =
   | { type: 'coverReady'; bookIds: number[] }
   | { type: 'removed'; bookIds: number[] }
   | { type: 'missing'; bookIds: number[] }
+
+/** 阅读统计：单日合计 */
+export interface DailyReadingStat {
+  /** 本地日期 'YYYY-MM-DD' */
+  day: string
+  durationMs: number
+}
+
+/** 阅读统计：单书累计 */
+export interface BookReadingStat {
+  bookId: number
+  title: string
+  /** ireader://cover/{id}；封面缺失时前端 onerror 落占位 */
+  coverUrl: string
+  durationMs: number
+  /** 最近一次阅读时间戳（ms） */
+  lastReadAt: number
+}
+
+/** 阅读统计汇总（stats:summary 返回） */
+export interface ReadingStatsSummary {
+  /** 全部书籍累计（ms） */
+  totalMs: number
+  /** 今日累计（ms） */
+  todayMs: number
+  /** 最近 days 天逐日序列（升序、已补齐零值日、含今天） */
+  days: DailyReadingStat[]
+  /** 每本书累计（durationMs 降序） */
+  books: BookReadingStat[]
+}
+
+/**
+ * 本地日期键 'YYYY-MM-DD'（双进程共用）。
+ * 必须用本地时区字段拼接：toISOString 是 UTC 日期，跨时区会错位。
+ */
+export function formatDayKey(date: Date): string {
+  const y = date.getFullYear()
+  const m = String(date.getMonth() + 1).padStart(2, '0')
+  const d = String(date.getDate()).padStart(2, '0')
+  return `${y}-${m}-${d}`
+}

@@ -9,6 +9,7 @@ import * as logger from '../services/logger'
 import { booksRepo } from '../db/repos/booksRepo'
 import { progressRepo } from '../db/repos/progressRepo'
 import { settingsRepo } from '../db/repos/settingsRepo'
+import { statsService } from '../services/statsService'
 import fs from 'node:fs'
 import {
   fail,
@@ -177,6 +178,15 @@ export function registerIpcHandlers(getWin: () => BrowserWindow | null): void {
     'settings:patch',
     wrap((partial: Parameters<typeof settingsRepo.patch>[0]) => settingsRepo.patch(partial))
   )
+
+  ipcMain.handle(
+    'stats:addTime',
+    wrap((payload: { bookId: number; day: string; deltaMs: number }) => {
+      statsService.addTime(payload)
+    })
+  )
+
+  ipcMain.handle('stats:summary', wrap(({ days }: { days: number }) => statsService.summary(days)))
 
   ipcMain.handle(
     'log:write',

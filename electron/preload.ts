@@ -6,6 +6,7 @@ import type {
   LibraryImportResult,
   ReaderOpenResult,
   ReadingProgress,
+  ReadingStatsSummary,
   Result,
   Settings,
 } from '../shared/types'
@@ -63,6 +64,13 @@ const ireaderApi = {
     all: (): Promise<Result<Settings>> => ipcRenderer.invoke('settings:all'),
     patch: (partial: Partial<Settings>): Promise<Result<Settings>> =>
       ipcRenderer.invoke('settings:patch', partial),
+  },
+  stats: {
+    /** 阅读时长心跳累加（fire-and-forget 场景由调用方静默失败） */
+    addTime: (bookId: number, day: string, deltaMs: number): Promise<Result<void>> =>
+      ipcRenderer.invoke('stats:addTime', { bookId, day, deltaMs }),
+    summary: (days: number): Promise<Result<ReadingStatsSummary>> =>
+      ipcRenderer.invoke('stats:summary', { days }),
   },
   log: {
     write: (level: 'info' | 'warn' | 'error', message: string): Promise<Result<void>> =>

@@ -111,6 +111,7 @@ import { ipc } from '../services/ipc'
 import { getFromCache, putToCache, clearCache } from '../services/pageCache'
 import { playPageCurl, type PageCurlHandle } from '../services/pageCurl'
 import { renderPageToCanvas, type PdfDocument, type RenderPageOptions } from '../services/pdf'
+import { startTracking, stopTracking, setTrackingPaused } from '../services/readingTracker'
 import EpubReaderView from './EpubReaderView.vue'
 
 const route = useRoute()
@@ -165,6 +166,8 @@ onMounted(async () => {
   // 键盘监听挂 window：绑在 div 上的 keydown 需要焦点，页面刚打开时焦点在 body ，会导致按键全部失效
   window.addEventListener('keydown', onKeydown)
   window.addEventListener('resize', onResize)
+  // 阅读计时从进入阅读页开始（PDF/EPUB 共用此路由视图，仅此一处埋点防双计）
+  startTracking(routeBookId.value)
   if (!settingsStore.loaded) await settingsStore.load()
   // 直达路由（冷启动）时文库可能未加载，先静默刷新以判断格式
   if (library.books.length === 0) {
@@ -196,9 +199,13 @@ watch(
   (id) => {
     const nid = Number(id)
     if (!Number.isFinite(nid) || nid === reader.bookId) return
+    startTracking(nid) // 换书切段：Timer 内部先结算旧书再开始新书
     void openBook(nid)
   }
 )
+
+// 加载失败（错误页停留）不计入阅读时长；恢复后按可见性重新评估
+watch(loadError, (e) => setTrackingPaused(Boolean(e)))
 
 /** 按 bookId 打开（可重入：上一本/下一本切换走同一路由不同参数）。首调时 close 为空操作 */
 async function doOpen(id: number) {
@@ -233,6 +240,7 @@ onBeforeUnmount(() => {
   if (hideTimer) clearTimeout(hideTimer)
   curlHandle?.cancel()
   clearCache()
+  stopTracking() // 结算并停止阅读计时
   reader.close()
 })
 

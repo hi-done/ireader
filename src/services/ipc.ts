@@ -57,6 +57,11 @@ export const ipc = {
     all: () => unwrap(api().settings.all()),
     patch: (partial: Partial<Settings>) => unwrap(api().settings.patch(partial)),
   },
+  stats: {
+    addTime: (bookId: number, day: string, deltaMs: number) =>
+      unwrap(api().stats.addTime(bookId, day, deltaMs)),
+    summary: (days: number) => unwrap(api().stats.summary(days)),
+  },
   log: {
     // 日志写入 fire-and-forget：失败静默（日志通道自身不能抛错影响业务流）
     write: (level: 'info' | 'warn' | 'error', message: string): void => {

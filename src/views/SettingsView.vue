@@ -47,6 +47,28 @@
           </label>
         </div>
       </section>
+
+      <section class="group">
+        <h2 class="group-title">数据</h2>
+        <div class="group-card">
+          <button class="row row-link" @click="router.push('/stats')">
+            <span class="row-label">阅读时间统计</span>
+            <span class="row-value">
+              查看阅读足迹
+              <svg class="chevron" width="7" height="12" viewBox="0 0 7 12" aria-hidden="true">
+                <path
+                  d="M1 1 L6 6 L1 11"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.6"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                />
+              </svg>
+            </span>
+          </button>
+        </div>
+      </section>
     </div>
   </div>
 </template>
@@ -131,5 +153,37 @@ async function save() {
   flex: 0 0 180px;
   font-size: 13.5px;
   color: var(--text-secondary);
+}
+
+/* 「数据」分组入口行：整行可点，负边距撑满卡片宽度 */
+.row-link {
+  width: calc(100% + 40px);
+  margin: 0 -20px;
+  padding: 13px 20px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.row-link:hover {
+  background: var(--surface-2);
+}
+
+.row-value {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.row-link:hover .row-value {
+  color: var(--brand);
+}
+
+.chevron {
+  color: var(--text-faint);
 }
 </style>
