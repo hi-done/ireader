@@ -74,6 +74,8 @@
 </template>
 
 <script setup lang="ts">
+// 设置页：阅读偏好、外观与数据入口
+// 视觉优化对应设计文档《设置与统计页视觉优化设计方案》§5.1
 import { onMounted, reactive } from 'vue'
 import { useRouter } from 'vue-router'
 import { useSettingsStore } from '../stores/settings'
@@ -99,19 +101,6 @@ async function save() {
   overflow-y: auto;
   background: var(--page-veil), url('/bg001.jpg') center / cover no-repeat, var(--bg);
   color: var(--text);
-}
-
-.page-head {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  padding: 24px 40px 8px;
-  background: var(--surface-alpha);
-  backdrop-filter: blur(20px) saturate(180%);
-}
-
-.page-head h1 {
-  font-size: 22px;
 }
 
 .groups {
@@ -177,6 +166,7 @@ async function save() {
   gap: 6px;
   font-size: 13px;
   color: var(--text-muted);
+  transition: color 0.15s ease;
 }
 
 .row-link:hover .row-value {
@@ -185,5 +175,11 @@ async function save() {
 
 .chevron {
   color: var(--text-faint);
+  transition: color 0.15s ease;
+}
+
+/* hover 时箭头与文字同步变品牌色（此前箭头恒为灰色，与文字变色脱节） */
+.row-link:hover .chevron {
+  color: var(--brand);
 }
 </style>

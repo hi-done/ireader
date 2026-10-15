@@ -17,7 +17,7 @@
     <!-- 错误态 -->
     <div v-else-if="loadError" class="content error-wrap">
       <p class="error-text">{{ loadError }}</p>
-      <button @click="load">重试</button>
+      <button class="primary" @click="load">重试</button>
     </div>
 
     <!-- 空态 -->
@@ -62,6 +62,7 @@
 <script setup lang="ts">
 // 阅读统计页：概览卡 + 每日柱状图 + 书籍排行
 // 对应设计文档《阅读时间统计功能设计方案》§9.2
+// 视觉优化对应设计文档《设置与统计页视觉优化设计方案》§5.2
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { formatDayKey, type ReadingStatsSummary } from '../../shared/types'
@@ -116,19 +117,6 @@ onMounted(load)
   overflow-y: auto;
   background: var(--page-veil), url('/bg001.jpg') center / cover no-repeat, var(--bg);
   color: var(--text);
-}
-
-.page-head {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  padding: 24px 40px 8px;
-  background: var(--surface-alpha);
-  backdrop-filter: blur(20px) saturate(180%);
-}
-
-.page-head h1 {
-  font-size: 22px;
 }
 
 .content {
@@ -210,8 +198,18 @@ onMounted(load)
   border-radius: 6px;
   background: transparent;
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: 12.5px;
   transition: background-color 0.15s ease, color 0.15s ease, box-shadow 0.15s ease;
+}
+
+/* 未选中项悬停仅加深文字，不加背景（避免与选中态混淆） */
+.seg button:not(.on):hover {
+  color: var(--text);
+}
+
+/* 容器内衬仅 2px，焦点环收紧避免贴边 */
+.seg button:focus-visible {
+  outline-offset: 1px;
 }
 
 .seg button.on {

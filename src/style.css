@@ -112,6 +112,22 @@ body {
   padding-left: 84px;
 }
 
+/* 页面头（设置 / 阅读统计等二级页）：与 .collection-head 同规范 */
+.page-head {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  padding: 18px 40px;
+  background: var(--surface-alpha);
+  backdrop-filter: blur(20px) saturate(180%);
+  border-bottom: 1px solid var(--border);
+}
+
+.page-head h1 {
+  font-size: 22px;
+  letter-spacing: -0.01em;
+}
+
 #app {
   margin: 0;
   padding: 0;
@@ -139,11 +155,14 @@ button {
   border-radius: var(--radius);
   padding: 7px 14px;
   cursor: pointer;
+  /* 防双击误选按钮文字 */
+  user-select: none;
   transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease,
     opacity 0.15s ease, transform 0.1s ease;
 }
 
-button:hover {
+/* 悬停统一排除禁用态：禁用按钮不应再响应悬停变色 */
+button:hover:not(:disabled) {
   background-color: var(--surface-2);
 }
 
@@ -170,8 +189,8 @@ button.primary,
   color: #fff;
 }
 
-button.primary:hover,
-.btn-primary:hover {
+button.primary:hover:not(:disabled),
+.btn-primary:hover:not(:disabled) {
   background-color: var(--brand-hover);
   border-color: var(--brand-hover);
 }
@@ -183,7 +202,7 @@ button.danger-fill {
   color: #fff;
 }
 
-button.danger-fill:hover {
+button.danger-fill:hover:not(:disabled) {
   background-color: var(--danger-hover);
   border-color: var(--danger-hover);
 }
@@ -195,7 +214,7 @@ button.ghost {
   color: var(--text-secondary);
 }
 
-button.ghost:hover {
+button.ghost:hover:not(:disabled) {
   background-color: var(--surface-2);
   color: var(--text);
 }
