@@ -38,7 +38,7 @@ description: IReader 项目编码规范：Result<T> 错误处理与 IPC 契约�
 
 ## 关键工程红线
 
-1. **纯离线**：应用不发起任何外网请求。禁止引入 CDN 资源、远程字体、遥测、自动更新等网络能力。
+1. **纯离线**：应用不发起任何外网请求；唯一例外是设置页用户手动点击「检查更新 / 下载更新」时访问 GitHub（hi-done/ireader Releases，经 updaterService 单点）。禁止 CDN 资源、远程字体、遥测与任何后台自动检查 / 轮询类网络行为。
 2. **better-sqlite3 是原生模块**：vite.config.ts 中必须保持 external；数据库操作只在主进程；渲染层不得直接引用。
 3. **协议注册时机**：registerSchemesAsPrivileged 必须在 app ready 前、protocol.handle 在 ready 后，顺序不可调换。
 4. **sandbox=true**：preload 必须用 contextBridge 暴露；不得开启 nodeIntegration、不得使用 remote。

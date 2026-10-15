@@ -1,7 +1,12 @@
 // 渲染进程侧对 window.ireader 的类型安全封装：统一解包 Result<T>，失败时抛出 AppError
 // 对应设计文档 §6.1
 
-import type { AppError, ReadingProgress, Result, Settings } from '../../shared/types'
+import type {
+  AppError,
+  ReadingProgress,
+  Result,
+  Settings,
+} from '../../shared/types'
 
 export class IpcError extends Error {
   code: AppError['code']
@@ -62,6 +67,17 @@ export const ipc = {
       unwrap(api().stats.addTime(bookId, day, deltaMs)),
     summary: (days: number) => unwrap(api().stats.summary(days)),
   },
+  updater: {
+    status: () => unwrap(api().updater.status()),
+    check: () => unwrap(api().updater.check()),
+    download: () => unwrap(api().updater.download()),
+    // 安装即退出应用：fire-and-forget，失败仅记日志（返回值无消费方）
+    install: (): void => {
+      api().updater.install().catch(() => undefined)
+    },
+    onProgress: (listener: Parameters<typeof window.ireader.updater.onProgress>[0]) =>
+      api().updater.onProgress(listener),
+  },
   log: {
     // 日志写入 fire-and-forget：失败静默（日志通道自身不能抛错影响业务流）
     write: (level: 'info' | 'warn' | 'error', message: string): void => {
@@ -73,5 +89,6 @@ export const ipc = {
   },
   shell: {
     showInFolder: (path: string) => unwrap(api().shell.showInFolder(path)),
+    openExternal: (url: string) => unwrap(api().shell.openExternal(url)),
   },
 }

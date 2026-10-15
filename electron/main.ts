@@ -6,6 +6,7 @@ import { initCoverService } from './services/coverService'
 import { registerProtocolHandler, registerProtocolScheme } from './services/protocol'
 import { registerIpcHandlers } from './ipc/handlers'
 import { initLogger, attachProcessErrorHandlers, info, error } from './services/logger'
+import { initUpdaterService } from './services/updaterService'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
@@ -94,6 +95,8 @@ app.whenReady().then(() => {
   }
   registerProtocolHandler()
   registerIpcHandlers(() => win)
+  // 应用内更新服务：订阅式初始化（挂事件监听与日志，无失败路径），网络仅由用户手动触发
+  initUpdaterService(() => win)
   // 移除 Electron 默认菜单（File/Edit/View/Window/Help）：Windows/Linux 上它占掉窗口顶部一条栏
   // macOS 保留默认菜单：其菜单在屏幕顶部系统栏、不占窗口空间，且移除会导致 Cmd+C/V 等系统快捷键失效
   if (process.platform !== 'darwin') {

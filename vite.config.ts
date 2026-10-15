@@ -14,8 +14,10 @@ export default defineConfig({
         vite: {
           build: {
             rollupOptions: {
-              // better-sqlite3 等原生模块是 CJS，不能被打成 ESM，必须 external
-              external: ['better-sqlite3'],
+              // better-sqlite3 等原生模块是 CJS，不能被打成 ESM，必须 external；
+              // electron-updater 是 CJS 且 autoUpdater 为 getter 导出，打进 ESM bundle
+              // 会有 CJS/ESM 互操作风险，external 后运行时从 node_modules 加载（对应《软件更新功能设计方案》§9.4）
+              external: ['better-sqlite3', 'electron-updater'],
             },
           },
         },

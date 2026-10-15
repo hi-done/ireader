@@ -16,6 +16,7 @@
   },
   "dependencies": {
     "better-sqlite3": "^12.11.1",
+    "electron-updater": "^6.8.9",
     "epubjs": "^0.3.93",
     "pdfjs-dist": "^4.10.38",
     "pinia": "^4.0.3",
@@ -39,6 +40,11 @@
   "build": {
     "appId": "com.ireader.reader",
     "productName": "IReader",
+    "publish": {
+      "provider": "github",
+      "owner": "hi-done",
+      "repo": "ireader"
+    },
     "directories": {
       "buildResources": "build",
       "output": "release/${version}"

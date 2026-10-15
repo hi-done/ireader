@@ -14,6 +14,9 @@ release
 *.app
 *.blockmap
 
+# 应用内更新功能的 dev 调试配置（electron-updater 官方机制，含本地服务地址，不入库）
+dev-app-update.yml
+
 # 日志
 logs
 *.log

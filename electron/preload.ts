@@ -9,6 +9,9 @@ import type {
   ReadingStatsSummary,
   Result,
   Settings,
+  UpdateCheckResult,
+  UpdateProgress,
+  UpdateStatus,
 } from '../shared/types'
 
 /** 渲染进程通过 window.ireader 访问的类型安全 API，对应设计文档 §6.2/§6.3 */
@@ -72,6 +75,22 @@ const ireaderApi = {
     summary: (days: number): Promise<Result<ReadingStatsSummary>> =>
       ipcRenderer.invoke('stats:summary', { days }),
   },
+  updater: {
+    /** 更新器状态（纯本地，设置页进入时恢复 UI 用） */
+    status: (): Promise<Result<UpdateStatus>> => ipcRenderer.invoke('updater:status'),
+    /** 手动检查更新（用户点击触发，唯一网络入口之一） */
+    check: (): Promise<Result<UpdateCheckResult>> => ipcRenderer.invoke('updater:check'),
+    /** 触发下载；resolve 即下载完成（进度经 onProgress 事件推送） */
+    download: (): Promise<Result<void>> => ipcRenderer.invoke('updater:download'),
+    /** 退出并静默安装重启；调用后应用随即退出，返回值无消费方 */
+    install: (): Promise<Result<void>> => ipcRenderer.invoke('updater:install'),
+    /** 订阅下载进度广播（返回取消函数，仿 library.onChanged） */
+    onProgress: (listener: (payload: UpdateProgress) => void) => {
+      const handler = (_event: unknown, payload: UpdateProgress) => listener(payload)
+      ipcRenderer.on('updater:progress', handler)
+      return () => ipcRenderer.off('updater:progress', handler)
+    },
+  },
   log: {
     write: (level: 'info' | 'warn' | 'error', message: string): Promise<Result<void>> =>
       ipcRenderer.invoke('log:write', { level, message }),
@@ -83,6 +102,9 @@ const ireaderApi = {
   shell: {
     showInFolder: (path: string): Promise<Result<void>> =>
       ipcRenderer.invoke('shell:showInFolder', { path }),
+    /** 在系统浏览器打开链接（主进程仅放行本项目 GitHub Releases 页白名单） */
+    openExternal: (url: string): Promise<Result<void>> =>
+      ipcRenderer.invoke('shell:openExternal', { url }),
   },
 }
 

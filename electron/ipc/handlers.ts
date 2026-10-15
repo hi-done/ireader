@@ -10,6 +10,7 @@ import { booksRepo } from '../db/repos/booksRepo'
 import { progressRepo } from '../db/repos/progressRepo'
 import { settingsRepo } from '../db/repos/settingsRepo'
 import { statsService } from '../services/statsService'
+import { updaterService } from '../services/updaterService'
 import fs from 'node:fs'
 import {
   fail,
@@ -27,6 +28,23 @@ function wrap<Args extends unknown[], T>(
   return (_event: IpcMainInvokeEvent, ...args: Args) => {
     try {
       return ok(fn(...args))
+    } catch (e) {
+      const err = e as AppError & Error
+      if (err && typeof (err as AppError).code === 'string') {
+        return fail((err as AppError).code, err.message)
+      }
+      return fail('UNKNOWN', err?.message ?? String(e))
+    }
+  }
+}
+
+/** 同 wrap，但业务函数为异步（updater 等网络业务）；错误转换逻辑与 wrap 保持一致 */
+function wrapAsync<Args extends unknown[], T>(
+  fn: (...args: Args) => Promise<T>
+): (event: IpcMainInvokeEvent, ...args: Args) => Promise<Result<T>> {
+  return async (_event: IpcMainInvokeEvent, ...args: Args) => {
+    try {
+      return ok(await fn(...args))
     } catch (e) {
       const err = e as AppError & Error
       if (err && typeof (err as AppError).code === 'string') {
@@ -188,6 +206,15 @@ export function registerIpcHandlers(getWin: () => BrowserWindow | null): void {
 
   ipcMain.handle('stats:summary', wrap(({ days }: { days: number }) => statsService.summary(days)))
 
+  // 应用内更新（仅由用户在设置页点击触发，网络边界见《软件更新功能设计方案》§3.2）
+  ipcMain.handle('updater:status', wrap(() => updaterService.getStatus()))
+
+  ipcMain.handle('updater:check', wrapAsync(() => updaterService.checkForUpdates()))
+
+  ipcMain.handle('updater:download', wrapAsync(() => updaterService.downloadUpdate()))
+
+  ipcMain.handle('updater:install', wrap(() => updaterService.quitAndInstall()))
+
   ipcMain.handle(
     'log:write',
     wrap(({ level, message }: { level: 'info' | 'warn' | 'error'; message: string }) => {
@@ -210,6 +237,17 @@ export function registerIpcHandlers(getWin: () => BrowserWindow | null): void {
     'shell:showInFolder',
     wrap(({ path }: { path: string }) => {
       shell.showItemInFolder(path)
+    })
+  )
+
+  ipcMain.handle(
+    'shell:openExternal',
+    wrap(({ url }: { url: string }) => {
+      // 白名单：只放行本项目 GitHub Releases 页，防渲染层被注入后借通道打开任意 URL
+      if (!url.startsWith('https://github.com/hi-done/ireader/releases')) {
+        throw { code: 'INVALID_PARAMS', message: '不允许打开该链接' }
+      }
+      shell.openExternal(url)
     })
   )
 }

@@ -68,6 +68,8 @@ export type ErrorCode =
   | 'PATH_EXISTS'
   | 'INVALID_PARAMS'
   | 'DB_ERROR'
+  | 'UPDATER_UNAVAILABLE'
+  | 'UPDATER_FAILED'
   | 'UNKNOWN'
 
 export interface AppError {
@@ -132,6 +134,46 @@ export interface ReadingStatsSummary {
   days: DailyReadingStat[]
   /** 每本书累计（durationMs 降序） */
   books: BookReadingStat[]
+}
+
+/** 更新检查结果（updater:check 返回） */
+export interface UpdateCheckResult {
+  /** 当前安装版本（app.getVersion()） */
+  currentVersion: string
+  /** 是否发现新版本 */
+  isUpdateAvailable: boolean
+  /** 新版本号（isUpdateAvailable 为 true 时有效，否则 null） */
+  newVersion: string | null
+  /** 更新说明（GitHub Release body 原文；渲染层经 cleanReleaseNotes 清洗后展示） */
+  releaseNotes: string | null
+  /** 新版本 Release 页地址（macOS 跳转下载 / 手动查看用；无更新时为 latest 页） */
+  releaseUrl: string | null
+  /** 当前平台是否支持自动下载安装（Windows=true，macOS 未签名=false） */
+  autoUpdateSupported: boolean
+}
+
+/** 更新器状态（updater:status 返回；设置页进入时恢复 UI 用，纯本地无网络） */
+export interface UpdateStatus {
+  currentVersion: string
+  autoUpdateSupported: boolean
+  /** idle=未检查；checking=检查中；available=有新版本；notAvailable=已最新；downloading=下载中；ready=下载完成待安装 */
+  state: 'idle' | 'checking' | 'available' | 'notAvailable' | 'downloading' | 'ready'
+  /** 新版本号（state 为 available / downloading / ready 时有效） */
+  newVersion: string | null
+  /** 最近一次下载进度（state 为 downloading 时非空） */
+  progress: UpdateProgress | null
+}
+
+/** 更新下载进度（updater:progress 事件载荷） */
+export interface UpdateProgress {
+  /** 0-100 */
+  percent: number
+  /** 已传输字节 */
+  transferred: number
+  /** 总字节 */
+  total: number
+  /** 字节/秒 */
+  bytesPerSecond: number
 }
 
 /**

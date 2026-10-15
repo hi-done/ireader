@@ -85,7 +85,11 @@ jobs:
       - name: 发布到 GitHub Releases
         uses: softprops/action-gh-release@v3
         with:
+          # latest.yml 与 blockmap 是应用内「检查更新」的元数据（electron-updater 消费），
+          # 缺失则更新功能不可用（对应《软件更新功能设计方案》§9.2）
           files: |
             release/**/*.dmg
             release/*/IReader-*-win.exe
+            release/*/IReader-*-win.exe.blockmap
+            release/*/latest.yml
           generate_release_notes: true
