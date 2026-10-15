@@ -1,8 +1,9 @@
-// ireader:// 自定义协议：向渲染进程提供 PDF/EPUB 原文件与封面图
+// ireader:// 自定义协议：向渲染进程提供 PDF/EPUB 原文件、封面图与 pdf.js 运行时资源
 // 对应设计文档 §3.4 / §6.5
 
 import { net, protocol } from 'electron'
 import { pathToFileURL } from 'node:url'
+import path from 'node:path'
 import fs from 'node:fs'
 import { booksRepo } from '../db/repos/booksRepo'
 import { getCoverFilePath } from './coverService'
@@ -42,8 +43,14 @@ function withCors(res: Response): Response {
 export function registerProtocolHandler(): void {
   protocol.handle(IREADER_PROTOCOL, async (request) => {
     const url = new URL(request.url)
-    // url.hostname 对应 pdf | epub | cover，url.pathname 对应 /{bookId}
+    // url.hostname 对应 pdf | epub | cover | pdfjs，url.pathname 对应 /{bookId} 或资源路径
     const kind = url.hostname
+
+    // pdf.js 运行时资源（cmaps / standard_fonts）不是书籍数据，须在 bookId 校验前分流
+    if (kind === 'pdfjs') {
+      return servePdfjsAsset(url.pathname)
+    }
+
     const bookId = Number(url.pathname.replace(/^\//, ''))
 
     if (!Number.isInteger(bookId)) {
@@ -69,4 +76,28 @@ export function registerProtocolHandler(): void {
 
     return new Response('Not Found', { status: 404 })
   })
+}
+
+/**
+ * 供给 pdf.js 运行时资源：ireader://pdfjs/cmaps/xxx.bcmap、ireader://pdfjs/standard_fonts/xxx.pfb。
+ * 中文等 CJK 文档的字体构建依赖 cmaps 目录的内置 CMap（如 Adobe-GB1-UCS2.bcmap），缺失会导致整段中文不渲染。
+ * 资源根目录 = <APP_ROOT>/node_modules/pdfjs-dist：开发态即项目 node_modules，
+ * 打包后位于 app.asar 内（Electron 的 fs 补丁支持直接读取 asar 内文件）。
+ */
+async function servePdfjsAsset(pathname: string): Promise<Response> {
+  // 白名单校验：仅放行 cmaps / standard_fonts 两目录下的单层文件名；
+  // 文件名按「字母数字下划线短横线 + 点号分段」匹配，连续点号不匹配，杜绝路径穿越
+  const match = /^\/(cmaps|standard_fonts)\/([A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*)$/.exec(pathname)
+  if (!match) {
+    return new Response('Not Found', { status: 404 })
+  }
+  const [, dir, fileName] = match
+  try {
+    const data = await fs.promises.readFile(
+      path.join(process.env.APP_ROOT!, 'node_modules', 'pdfjs-dist', dir, fileName)
+    )
+    return withCors(new Response(data, { headers: { 'Content-Type': 'application/octet-stream' } }))
+  } catch {
+    return new Response('Not Found', { status: 404 })
+  }
 }

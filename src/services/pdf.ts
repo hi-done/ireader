@@ -11,11 +11,74 @@ export type PdfDocument = pdfjsLib.PDFDocumentProxy
 export type PdfLoadingTask = pdfjsLib.PDFDocumentLoadingTask
 export type PdfRenderTask = pdfjsLib.RenderTask
 
+// pdf.js 运行时资源地址：由主进程 ireader:// 协议从 node_modules/pdfjs-dist 供给。
+// 必须显式提供——中文等 CJK 文档中 Identity-H + Adobe-GB1 的复合字体若无 ToUnicode，
+// 字体构建阶段必须加载内置 CMap（如 Adobe-GB1-UCS2.bcmap），缺失会导致整段中文不渲染
+const CMAP_URL = 'ireader://pdfjs/cmaps/'
+const STANDARD_FONT_DATA_URL = 'ireader://pdfjs/standard_fonts/'
+
+/**
+ * CMap 数据加载工厂（pdf.js CMapReaderFactory 约定，在主线程执行）。
+ * pdf.js 官方工厂对非 http(s) 地址会退回 XMLHttpRequest，这里显式用 fetch
+ * 走与书籍文件相同的 ireader:// 通道，保证开发与打包环境行为一致
+ */
+class IreaderCmapReaderFactory {
+  private readonly baseUrl: string
+  private readonly isCompressed: boolean
+
+  constructor({ baseUrl, isCompressed }: { baseUrl: string | null; isCompressed?: boolean }) {
+    this.baseUrl = baseUrl ?? CMAP_URL
+    this.isCompressed = isCompressed !== false
+  }
+
+  async fetch({ name }: { name: string }): Promise<{ cMapData: Uint8Array; isCompressed: boolean }> {
+    if (!name) throw new Error('CMap name must be specified.')
+    const url = `${this.baseUrl}${name}${this.isCompressed ? '.bcmap' : ''}`
+    try {
+      const res = await fetch(url)
+      if (!res.ok) throw new Error(res.statusText)
+      return { cMapData: new Uint8Array(await res.arrayBuffer()), isCompressed: this.isCompressed }
+    } catch {
+      throw new Error(`Unable to load ${this.isCompressed ? 'binary ' : ''}CMap at: ${url}`)
+    }
+  }
+}
+
+/** 标准字体数据加载工厂（pdf.js StandardFontDataFactory 约定）：Symbol / ZapfDingbats 等回退字形数据 */
+class IreaderStandardFontDataFactory {
+  private readonly baseUrl: string
+
+  constructor({ baseUrl }: { baseUrl: string | null }) {
+    this.baseUrl = baseUrl ?? STANDARD_FONT_DATA_URL
+  }
+
+  async fetch({ filename }: { filename: string }): Promise<Uint8Array> {
+    if (!filename) throw new Error('Font filename must be specified.')
+    const url = `${this.baseUrl}${filename}`
+    try {
+      const res = await fetch(url)
+      if (!res.ok) throw new Error(res.statusText)
+      return new Uint8Array(await res.arrayBuffer())
+    } catch {
+      throw new Error(`Unable to load font data at: ${url}`)
+    }
+  }
+}
+
 /** 加载文档并保留 loadingTask（销毁文档需经 task.destroy()） */
 export async function loadPdfWithTask(
   url: string
 ): Promise<{ doc: PdfDocument; task: PdfLoadingTask }> {
-  const task = pdfjsLib.getDocument({ url })
+  const task = pdfjsLib.getDocument({
+    url,
+    // CJK 内置 CMap 与标准字体数据必须提供，缺失会导致中文整段不渲染（见 project-study Q2-20261015）
+    cMapUrl: CMAP_URL,
+    cMapPacked: true,
+    standardFontDataUrl: STANDARD_FONT_DATA_URL,
+    // 用自定义工厂接管加载：不依赖 pdf.js 对非 http(s) 地址的 XHR 回退
+    CMapReaderFactory: IreaderCmapReaderFactory,
+    StandardFontDataFactory: IreaderStandardFontDataFactory,
+  })
   return { doc: await task.promise, task }
 }
 
