@@ -16,6 +16,7 @@ import {
   fail,
   ok,
   type AppError,
+  type CaptureRegionRect,
   type LibraryChangedPayload,
   type ReadingProgress,
   type Result,
@@ -230,6 +231,31 @@ export function registerIpcHandlers(getWin: () => BrowserWindow | null): void {
     'window:setFullscreen',
     wrap(({ fullscreen }: { fullscreen: boolean }) => {
       getWin()?.setFullScreen(fullscreen)
+    })
+  )
+
+  ipcMain.handle(
+    'window:captureRegion',
+    wrapAsync(async (rect: CaptureRegionRect) => {
+      const win = getWin()
+      if (!win || win.webContents.isDestroyed()) {
+        throw { code: 'UNKNOWN', message: '窗口不可用，无法截图' }
+      }
+      if (!rect || [rect.x, rect.y, rect.width, rect.height].some((n) => !Number.isFinite(n))) {
+        throw { code: 'INVALID_PARAMS', message: '截图区域参数无效' }
+      }
+      // capturePage 捕获合成输出（含 iframe 内容），rect 为 DIP 像素相对内容区左上角，
+      // 与渲染层 getBoundingClientRect 同坐标系；越界会返回空图，先钳制到内容区
+      const [cw, ch] = win.getContentSize()
+      const x = Math.max(0, Math.min(Math.round(rect.x), cw - 1))
+      const y = Math.max(0, Math.min(Math.round(rect.y), ch - 1))
+      const width = Math.max(1, Math.min(Math.round(rect.width), cw - x))
+      const height = Math.max(1, Math.min(Math.round(rect.height), ch - y))
+      const image = await win.webContents.capturePage({ x, y, width, height })
+      if (image.isEmpty()) {
+        throw { code: 'UNKNOWN', message: '截图失败：未取到画面' }
+      }
+      return image.toPNG()
     })
   )
 

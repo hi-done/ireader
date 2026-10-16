@@ -3,6 +3,7 @@
 
 import type {
   AppError,
+  CaptureRegionRect,
   ReadingProgress,
   Result,
   Settings,
@@ -86,6 +87,7 @@ export const ipc = {
   },
   window: {
     setFullscreen: (fullscreen: boolean) => unwrap(api().window.setFullscreen(fullscreen)),
+    captureRegion: (rect: CaptureRegionRect) => unwrap(api().window.captureRegion(rect)),
   },
   shell: {
     showInFolder: (path: string) => unwrap(api().shell.showInFolder(path)),

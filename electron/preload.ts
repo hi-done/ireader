@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import type {
   Book,
+  CaptureRegionRect,
   Collection,
   LibraryChangedPayload,
   LibraryImportResult,
@@ -98,6 +99,9 @@ const ireaderApi = {
   window: {
     setFullscreen: (fullscreen: boolean): Promise<Result<void>> =>
       ipcRenderer.invoke('window:setFullscreen', { fullscreen }),
+    /** 截取窗口内容区指定矩形（含 iframe 合成输出）；EPUB 翻页冻结帧用，纯本地能力 */
+    captureRegion: (rect: CaptureRegionRect): Promise<Result<Uint8Array>> =>
+      ipcRenderer.invoke('window:captureRegion', rect),
   },
   shell: {
     showInFolder: (path: string): Promise<Result<void>> =>

@@ -369,6 +369,36 @@ export function hardenRenditionQueue(rendition: EpubRendition): void {
     })
 }
 
+/**
+ * 等待当前视图稳定：视口内全部 <img> 加载/失败 + 双 rAF；超时兜底不阻断。
+ * 注意：epubjs 类型声明把 getContents() 标成单个 Contents（运行时实际是数组），用 Array.isArray 兼容收窄。
+ * @param rendition 当前渲染实例
+ * @param timeoutMs 图片等待上限（毫秒），超时后仅等双 rAF
+ */
+export async function waitViewsSettled(rendition: EpubRendition, timeoutMs = 800): Promise<void> {
+  const raw = rendition.getContents() as unknown as EpubContents | EpubContents[] | null
+  const contentsList = raw == null ? [] : Array.isArray(raw) ? raw : [raw]
+  const waits: Promise<void>[] = []
+  for (const contents of contentsList) {
+    const doc = contents?.document
+    if (!doc) continue
+    for (const img of Array.from(doc.querySelectorAll('img'))) {
+      if (img.complete) continue
+      waits.push(
+        new Promise((resolve) => {
+          img.addEventListener('load', () => resolve(), { once: true })
+          img.addEventListener('error', () => resolve(), { once: true })
+        })
+      )
+    }
+  }
+  await Promise.race([
+    Promise.allSettled(waits),
+    new Promise((resolve) => setTimeout(resolve, timeoutMs)),
+  ])
+  await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))
+}
+
 /** epub.js 默认管理器的最小结构（仅声明封面策略 patch 用到的成员） */
 type EpubManagerLike = {
   layout?: { name?: string; divisor?: number; delta?: number } | null

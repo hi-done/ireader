@@ -334,19 +334,21 @@ watch(currentDisplayPages, async () => {
   }
 })
 
-/** 将当前显示中的页面位图按布局横向拼接为一张快照（双页时含两页，含 dpr 物理像素） */
+/** 将当前显示画面合成为一张快照（以 .page-content 显示盒为坐标系；双页含两页，含 dpr 物理像素）。
+ *  几何取自各 canvas 的实际显示矩形（getBoundingClientRect）而非 style 尺寸——
+ *  快照必须复刻“用户实际看到的画面”，CSS 居中/钳制等布局结果都被如实包含 */
 function snapshotVisible(): HTMLCanvasElement | null {
+  const content = pageContentEl.value
+  if (!content) return null
   const list = currentDisplayPages.value
     .map((_, i) => canvasEls.value[i])
     .filter((c): c is HTMLCanvasElement => !!c && c.width > 0)
   if (!list.length) return null
 
-  const GAP = 0 // 双页对页紧贴
   const dpr = window.devicePixelRatio || 1
-  const cssWidths = list.map((c) => parseFloat(c.style.width) || c.width)
-  const cssHeights = list.map((c) => parseFloat(c.style.height) || c.height)
-  const cssW = cssWidths.reduce((a, b) => a + b, 0) + GAP * (list.length - 1)
-  const cssH = Math.max(...cssHeights)
+  const contentRect = content.getBoundingClientRect()
+  const cssW = contentRect.width
+  const cssH = contentRect.height
 
   const snap = document.createElement('canvas')
   snap.width = Math.max(1, Math.round(cssW * dpr))
@@ -356,18 +358,17 @@ function snapshotVisible(): HTMLCanvasElement | null {
   const sctx = snap.getContext('2d')
   if (!sctx) return null
 
-  let x = 0
-  list.forEach((c, i) => {
-    // 与 page-content 的 align-items: center 一致，页面垂直居中排布
+  // 每页按其实际显示矩形贴入（相对显示盒坐标）：对页紧贴、垂直居中随实际布局自然成立
+  for (const c of list) {
+    const rect = c.getBoundingClientRect()
     sctx.drawImage(
       c,
-      x * dpr,
-      ((cssH - cssHeights[i]) / 2) * dpr,
-      cssWidths[i] * dpr,
-      cssHeights[i] * dpr
+      (rect.left - contentRect.left) * dpr,
+      (rect.top - contentRect.top) * dpr,
+      rect.width * dpr,
+      rect.height * dpr
     )
-    x += cssWidths[i] + GAP
-  })
+  }
   return snap
 }
 
@@ -873,9 +874,10 @@ function onKeydown(e: KeyboardEvent) {
   }
 }
 
+/* 尺寸完全由渲染层决定（style.width/height 即渲染目标尺寸），不做 CSS 钳制：
+   钳制会让静态显示盒小于渲染尺寸，与快照/翻页动画的坐标系不一致，翻页时出现伸缩/缩放感；
+   内容超出视口时由 .page-area 滚动 / 拖拽平移承接 */
 .page-wrap canvas {
-  max-height: calc(100vh - 24px);
-  max-width: 100vw;
   display: block;
 }
 

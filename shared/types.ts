@@ -100,6 +100,14 @@ export interface ReaderOpenResult {
   progress: ReadingProgress | null
 }
 
+/** 窗口内容区截图矩形（CSS/DIP 像素，相对页面内容区左上角；EPUB 翻页冻结帧用） */
+export interface CaptureRegionRect {
+  x: number
+  y: number
+  width: number
+  height: number
+}
+
 export type LibraryChangedPayload =
   | { type: 'added'; bookIds: number[] }
   | { type: 'coverReady'; bookIds: number[] }

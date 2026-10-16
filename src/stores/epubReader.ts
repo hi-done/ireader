@@ -216,14 +216,15 @@ export const useEpubReaderStore = defineStore('epubReader', () => {
     return totalPages.value
   }
 
-  function next() {
+  /** 下一页；返回导航完成 Promise，供视图等待新视图稳定后再播卷曲动画 */
+  function next(): Promise<void> {
     const r = rendition
     if (!r) {
       pushNavDiag('[nav] store.next no rendition')
-      return
+      return Promise.resolve()
     }
     pushNavDiag('[nav] store.next enter')
-    r.next()
+    return r.next()
       .then(() => pushNavDiag('[nav] store.next ok'))
       .catch((e) => {
         pushNavDiag(`[nav] store.next error ${e instanceof Error ? e.message : String(e)}`)
@@ -231,14 +232,15 @@ export const useEpubReaderStore = defineStore('epubReader', () => {
       })
   }
 
-  function prev() {
+  /** 上一页；返回导航完成 Promise（同 next） */
+  function prev(): Promise<void> {
     const r = rendition
     if (!r) {
       pushNavDiag('[nav] store.prev no rendition')
-      return
+      return Promise.resolve()
     }
     pushNavDiag('[nav] store.prev enter')
-    r.prev()
+    return r.prev()
       .then(() => pushNavDiag('[nav] store.prev ok'))
       .catch((e) => {
         pushNavDiag(`[nav] store.prev error ${e instanceof Error ? e.message : String(e)}`)
@@ -246,17 +248,18 @@ export const useEpubReaderStore = defineStore('epubReader', () => {
       })
   }
 
-  function goTo(index: number) {
-    if (!book || !rendition) return
+  /** 跳转到指定 spine 页索引；返回导航完成 Promise（同 next） */
+  function goTo(index: number): Promise<void> {
+    if (!book || !rendition) return Promise.resolve()
     if (layout.value === 'pre-paginated') {
       // 图片型书：页 = spine section，直接按 href 定位（locations 对图片页无效）
       const section = book.spine.get(index)
       if (section) {
-        void rendition.display(section.href).catch((e) => console.error('[epub] 跳页失败', e))
+        return rendition.display(section.href).catch((e) => console.error('[epub] 跳页失败', e))
       }
-      return
+      return Promise.resolve()
     }
-    void displayPageIndex(book, rendition, index).catch((e) =>
+    return displayPageIndex(book, rendition, index).catch((e) =>
       console.error('[epub] 跳页失败', e)
     )
   }

@@ -9,8 +9,8 @@ export interface PageCurlOptions {
   target: HTMLElement
   /** 旧页组合成快照（物理像素 = CSS × dpr，且带有 style.width/height） */
   from: HTMLCanvasElement
-  /** 新页组合成快照 */
-  to: HTMLCanvasElement
+  /** 新页组合成快照；省略/null 时不绘底图——覆盖层透明区直接透出下方实时内容（EPUB 冻结帧方案） */
+  to?: HTMLCanvasElement | null
   /** 视觉方向：true = 从右往左翻（旧页右缘掀起向左），false = 从左往右 */
   fromRight: boolean
   duration?: number
@@ -23,13 +23,6 @@ export interface PageCurlHandle {
 
 const easeInOutCubic = (t: number): number =>
   t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2
-
-function cssSize(canvas: HTMLCanvasElement): { w: number; h: number } {
-  return {
-    w: parseFloat(canvas.style.width) || canvas.width,
-    h: parseFloat(canvas.style.height) || canvas.height,
-  }
-}
 
 export function playPageCurl(opts: PageCurlOptions): PageCurlHandle {
   const { container, target, from, to, fromRight, onDone } = opts
@@ -73,9 +66,10 @@ export function playPageCurl(opts: PageCurlOptions): PageCurlHandle {
     onDone?.()
   }
 
+  // 按覆盖层尺寸铺满绘制：快照以目标显示盒为坐标系合成，这里归一化到 (w, h)，
+  // 保证底图（新页）与静态显示同位同尺寸
   const drawBmp = (bmp: HTMLCanvasElement) => {
-    const { w: cw, h: ch } = cssSize(bmp)
-    ctx.drawImage(bmp, 0, 0, cw, ch)
+    ctx.drawImage(bmp, 0, 0, w, h)
   }
 
   const frame = (now: number) => {
@@ -94,8 +88,8 @@ export function playPageCurl(opts: PageCurlOptions): PageCurlHandle {
     const restW = forward ? fx : w - fx // 未翻保留区宽度
     const liftW = w - restW // 翻起块宽度
 
-    // 1. 底图：新页组（内容始终正向）
-    drawBmp(to)
+    // 1. 底图：新页组（内容始终正向）；未提供 to 时跳过，透明区透出实时视图
+    if (to) drawBmp(to)
 
     // 2. 翻起块悬空投在底图上的软投影：贴折缝、向翻走方向羽化
     const castW = Math.min(120, shift * 0.45 + 30) * e
