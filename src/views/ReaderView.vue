@@ -329,6 +329,7 @@ watch(currentDisplayPages, async () => {
         from: fromSnap,
         to: toSnap,
         fromRight,
+        zIndex: 1, // 低于控制栏（z2）：翻页动画不遮挡顶部/底部工具栏
       })
     }
   }
@@ -577,6 +578,7 @@ async function finishSlideWithCurl(fromSnap: HTMLCanvasElement, dir: 'forward' |
     from: fromSnap,
     to: toSnap,
     fromRight,
+    zIndex: 1, // 低于控制栏（z2）：翻页动画不遮挡顶部/底部工具栏
   })
 }
 

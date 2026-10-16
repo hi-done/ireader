@@ -110,7 +110,7 @@ import type { Contents } from 'epubjs'
 import { useEpubReaderStore } from '../stores/epubReader'
 import { useLibraryStore } from '../stores/library'
 import { ipc } from '../services/ipc'
-import { getEpubDiag, waitViewsSettled } from '../services/epub'
+import { getEpubDiag, pushNavDiag, waitViewsSettled } from '../services/epub'
 import { captureRegionToCanvas } from '../services/capture'
 import { playPageCurl, type PageCurlHandle } from '../services/pageCurl'
 
@@ -328,6 +328,30 @@ function doubleRaf(): Promise<void> {
   return new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
 }
 
+/**
+ * 等一次 relocated 事件（store.current 已刷新后 resolve）；超时兜底不阻断。
+ * epubjs 的 next()/prev()/display() Promise 在 reportLocation 的 rAF 回调（emit relocated）
+ * 之前就 resolve，await 导航返回时 store.current 仍是旧值，直接做 CFI 比对会把正常翻页
+ * 误判为「无位移」而静默跳过动画——位移判定前必须先等此事件
+ */
+function waitNextRelocated(timeoutMs = 500): Promise<void> {
+  const r = store.getRendition()
+  if (!r) return Promise.resolve()
+  return new Promise((resolve) => {
+    let settled = false
+    let timer: ReturnType<typeof setTimeout> | null = null
+    const finish = () => {
+      if (settled) return
+      settled = true
+      r.off('relocated', finish)
+      if (timer) clearTimeout(timer)
+      resolve()
+    }
+    timer = setTimeout(finish, timeoutMs)
+    r.on('relocated', finish)
+  })
+}
+
 /** 冻结帧上屏：旧画面快照绝对定位铺满 .epub-area；不拦截交互（连翻由 busy 逻辑兜底） */
 function attachFreeze(area: HTMLElement, from: HTMLCanvasElement) {
   freezeEl = from
@@ -357,6 +381,7 @@ async function turnPage(dir: 'forward' | 'back'): Promise<void> {
 
   // 快速连翻：作废进行中的编排并清理（覆盖层/冻结帧在屏时再截图会拍到旧像素），本次瞬切
   if (turnBusy) {
+    pushNavDiag('[curl] busy → 瞬切')
     turnSeq++
     discardTurn()
     turnBusy = false // 旧流程被 seq 作废可能不会自行释放（如卡在 await plain），这里统一复位
@@ -365,6 +390,7 @@ async function turnPage(dir: 'forward' | 'back'): Promise<void> {
     return
   }
   if (reducedMotion) {
+    pushNavDiag('[curl] reduced-motion → 瞬切')
     void plain()
     return
   }
@@ -378,6 +404,7 @@ async function turnPage(dir: 'forward' | 'back'): Promise<void> {
 
   turnBusy = true
   const seq = ++turnSeq
+  const t0 = performance.now() // 分段耗时埋点：cap（截图）/ nav（epubjs 重建）/ img（等图）三段
   try {
     // 1. 瞬隐控制栏 → 双 rAF → 捕获干净旧画面；控制栏维持隐藏至卷曲结束（避免覆盖层遮栏闪断）
     captureHide.value = true
@@ -394,27 +421,44 @@ async function turnPage(dir: 'forward' | 'back'): Promise<void> {
       })
     } catch {
       from = null // 截图失败：降级为无动画瞬切
+      pushNavDiag('[curl] capture fail → 无动画')
     }
+    const tCap = performance.now()
     if (seq !== turnSeq) return
 
     // 2. 冻结帧先上屏（实时画面仍是旧页，视觉无缝），再驱动 epub.js 重建视图
     const prevCfi = store.current?.cfi
     if (from) attachFreeze(area, from)
+    // relocated 监听须先于导航挂上：epubjs 导航 Promise 早于 relocated 事件 resolve，
+    // await plain() 返回时 store.current 还是旧值（详见 waitNextRelocated 注释）
+    const relocated = waitNextRelocated()
     await plain()
+    // 图片等待与 relocated 通报并行（都只依赖 plain 完成）；限时 250ms：
+    // 卷曲透明区从自由边渐进揭示（缓动下前段揭示面小），图片解码与动画前段重叠，
+    // 超时即开动画不阻塞——仅慢盘/超大图可能动画中段短暂微露白
+    const rendition = store.getRendition()
+    const settled = rendition ? waitViewsSettled(rendition, 250) : Promise.resolve()
+    await relocated
+    const tNav = performance.now()
     if (seq !== turnSeq) return // 已被连翻流程接替（冻结帧已由 discardTurn 揭除）
 
     // 3. 未发生位移（首/尾页）：不播动画，仅揭除冻结帧。
     //    用 CFI 而非 index 判定：文字型书的 index 是 location 块索引，一屏翻页可能仍在同一块内
     if (!from || !store.current || store.current.cfi === prevCfi) {
+      pushNavDiag(`[curl] no-move skip from=${from ? 'ok' : 'null'} d=${Math.round(tNav - t0)}ms`)
       removeFreeze()
       return
     }
 
-    // 4. 等新视图稳定后播卷曲；省略 to：覆盖层透明区透出实时新视图
-    const rendition = store.getRendition()
-    if (rendition) await waitViewsSettled(rendition, 800)
+    // 4. 等新视图稳定（多数情况在等 relocated 期间已就绪）后播卷曲；省略 to：透出实时新视图
+    await settled
     if (seq !== turnSeq) return
     const fromRight = (dir === 'forward') === (store.direction === 'ltr') // 同 PDF
+    const tPlay = performance.now()
+    pushNavDiag(
+      `[curl] play ${dir} fromRight=${fromRight} d=${Math.round(tPlay - t0)}ms ` +
+        `cap=${Math.round(tCap - t0)} nav=${Math.round(tNav - tCap)} img=${Math.round(tPlay - tNav)}`
+    )
     curlHandle = playPageCurl({
       container: root,
       target: area,
@@ -539,22 +583,31 @@ async function finishSlideCurl(finalIndex: number): Promise<void> {
   // 补播沿用 busy/seq：期间热区/键盘的翻页请求走瞬切降级并作废本流程
   turnBusy = true
   const seq = ++turnSeq
+  const t0 = performance.now()
+  // 同 turnPage：goTo 的 Promise 早于 relocated 事件 resolve，位移判定前先等 relocated
+  const relocated = waitNextRelocated()
   try {
     const from = await fromPromise
     if (seq !== turnSeq) return
     if (from) attachFreeze(area, from)
     await nav
+    // 图片等待与 relocated 通报并行；限时 250ms，超时不阻塞开动画（同 turnPage）
+    const rendition = store.getRendition()
+    const settled = rendition ? waitViewsSettled(rendition, 250) : Promise.resolve()
+    await relocated
     if (seq !== turnSeq) return
     // 未发生位移：不播动画，仅揭除冻结帧（CFI 判定，同 turnPage）
     if (!from || !store.current || store.current.cfi === startCfi) {
+      pushNavDiag('[curl] slide no-move skip')
       removeFreeze()
       return
     }
-    const rendition = store.getRendition()
-    if (rendition) await waitViewsSettled(rendition, 800)
+    // 等新视图稳定（多数情况在等 relocated 期间已就绪）
+    await settled
     if (seq !== turnSeq) return
     const dir: 'forward' | 'back' = finalIndex > startIndex ? 'forward' : 'back'
     const fromRight = (dir === 'forward') === (store.direction === 'ltr') // 同 PDF
+    pushNavDiag(`[curl] slide play d=${Math.round(performance.now() - t0)}ms`)
     curlHandle = playPageCurl({
       container: root,
       target: area,

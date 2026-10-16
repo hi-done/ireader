@@ -13,6 +13,8 @@ export interface PageCurlOptions {
   to?: HTMLCanvasElement | null
   /** 视觉方向：true = 从右往左翻（旧页右缘掀起向左），false = 从左往右 */
   fromRight: boolean
+  /** 覆盖层 z-index（默认 5）；传低于控制栏（z2）的值（如 1）可让工具栏叠在动画之上不遮挡 */
+  zIndex?: number
   duration?: number
   onDone?: () => void
 }
@@ -25,7 +27,7 @@ const easeInOutCubic = (t: number): number =>
   t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2
 
 export function playPageCurl(opts: PageCurlOptions): PageCurlHandle {
-  const { container, target, from, to, fromRight, onDone } = opts
+  const { container, target, from, to, fromRight, zIndex = 5, onDone } = opts
   const duration = opts.duration ?? 450
   const dpr = window.devicePixelRatio || 1
 
@@ -42,7 +44,7 @@ export function playPageCurl(opts: PageCurlOptions): PageCurlHandle {
   overlay.style.top = `${targetRect.top - containerRect.top}px`
   overlay.style.width = `${w}px`
   overlay.style.height = `${h}px`
-  overlay.style.zIndex = '5'
+  overlay.style.zIndex = String(zIndex)
   overlay.style.pointerEvents = 'none'
   container.appendChild(overlay)
 
