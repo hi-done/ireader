@@ -1,7 +1,8 @@
 // 阅读统计展示纯函数：时长格式化、坐标轴取整、连续天数、相对日期
 // 对应设计文档《阅读时间统计功能设计方案》§9.7
+// 排行口径派生对应设计文档《书籍排行今日与总计切换设计方案》§7.1
 
-import type { DailyReadingStat } from '../../shared/types'
+import type { BookReadingStat, DailyReadingStat } from '../../shared/types'
 
 /** 时长格式化：'<1 分钟' / '46 分钟' / '12 小时 30 分' / '2 小时'（四舍五入到分钟） */
 export function formatDuration(ms: number): string {
@@ -48,6 +49,20 @@ export function calcStreak(days: DailyReadingStat[], today: string): number {
     i--
   }
   return count
+}
+
+/** 书籍排行展示口径（纯渲染层概念，不进 shared 契约） */
+export type RankingMode = 'total' | 'today'
+
+/**
+ * 按口径派生排行列表：
+ * - total：原样返回（stats:summary 已按总时长降序）
+ * - today：过滤今日在读（todayMs > 0）并按今日时长降序；
+ *   今日时长相同时维持原（总计降序）相对顺序（稳定排序）
+ */
+export function pickRankingBooks(books: BookReadingStat[], mode: RankingMode): BookReadingStat[] {
+  if (mode === 'total') return books
+  return books.filter((b) => b.todayMs > 0).sort((a, b) => b.todayMs - a.todayMs)
 }
 
 /** 相对日期文案：'今天' / '昨天' / 'N 天前'（超过 30 天显示 'YYYY/M/D'） */

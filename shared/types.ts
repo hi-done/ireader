@@ -119,7 +119,10 @@ export interface BookReadingStat {
   title: string
   /** ireader://cover/{id}；封面缺失时前端 onerror 落占位 */
   coverUrl: string
+  /** 全部历史累计时长（ms） */
   durationMs: number
+  /** 今日已读时长（ms）；今日未读为 0。排行「今日」视图按此过滤与排序 */
+  todayMs: number
   /** 最近一次阅读时间戳（ms） */
   lastReadAt: number
 }

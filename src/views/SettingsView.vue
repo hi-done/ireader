@@ -290,6 +290,10 @@ function retry() {
   justify-content: space-between;
   gap: 16px;
   padding: 13px 0;
+  /* 统一行高：以最高的控件行（select/input ≈ 60px）为基准，文字行 / 入口行 / checkbox 行由 min-height 撑齐；
+     全局未设 border-box，这里须显式声明让 min-height 含 padding；软件更新行多行态内容更高时自然撑开 */
+  box-sizing: border-box;
+  min-height: 60px;
 }
 
 .row:not(:last-child) {

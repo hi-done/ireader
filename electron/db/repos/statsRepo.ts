@@ -1,5 +1,6 @@
 // reading_stats 表数据访问
 // 对应设计文档《阅读时间统计功能设计方案》§5.2
+// 今日口径条件聚合对应设计文档《书籍排行今日与总计切换设计方案》§6.1
 
 import { getDatabase } from '../database'
 
@@ -8,6 +9,8 @@ export interface BookStatRow {
   bookId: number
   title: string
   durationMs: number
+  /** 今日已读时长（今日无记录为 0） */
+  todayMs: number
   /** 最近一次阅读时间戳（= 最后一次累加的 updated_at） */
   lastReadAt: number
 }
@@ -32,18 +35,20 @@ export const statsRepo = {
       .run({ bookId, day, deltaMs, now })
   },
 
-  /** 每本书累计（JOIN books 取标题），时长降序 */
-  listByBook(): BookStatRow[] {
+  /** 每本书累计与今日时长（JOIN books 取标题），总时长降序 */
+  listByBook(today: string): BookStatRow[] {
     return getDatabase()
       .prepare(
         `SELECT s.book_id AS bookId, b.title AS title,
-                SUM(s.duration_ms) AS durationMs, MAX(s.updated_at) AS lastReadAt
+                SUM(s.duration_ms) AS durationMs,
+                SUM(CASE WHEN s.day = ? THEN s.duration_ms ELSE 0 END) AS todayMs,
+                MAX(s.updated_at) AS lastReadAt
          FROM reading_stats s
          JOIN books b ON b.id = s.book_id
          GROUP BY s.book_id
          ORDER BY durationMs DESC`
       )
-      .all() as BookStatRow[]
+      .all(today) as BookStatRow[]
   },
 
   /** 自 fromDay（含）起的逐日合计（升序，仅返回有数据的天） */

@@ -1,5 +1,6 @@
 // 阅读统计服务：上报校验与汇总编排
 // 对应设计文档《阅读时间统计功能设计方案》§7.1
+// 每书今日时长对应设计文档《书籍排行今日与总计切换设计方案》§6.2
 
 import { booksRepo } from '../db/repos/booksRepo'
 import { statsRepo } from '../db/repos/statsRepo'
@@ -55,11 +56,12 @@ export const statsService = {
       filledDays.push({ day: key, durationMs: dayMap.get(key) ?? 0 })
     }
 
-    const books: BookReadingStat[] = statsRepo.listByBook().map((r) => ({
+    const books: BookReadingStat[] = statsRepo.listByBook(formatDayKey(today)).map((r) => ({
       bookId: r.bookId,
       title: r.title,
       coverUrl: getCoverUrl(r.bookId),
       durationMs: r.durationMs,
+      todayMs: r.todayMs,
       lastReadAt: r.lastReadAt,
     }))
 

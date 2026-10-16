@@ -51,9 +51,16 @@
       <section class="panel">
         <div class="panel-head">
           <h2>书籍排行</h2>
-          <span class="panel-count">共 {{ summary.books.length }} 本</span>
+          <div class="panel-head-right">
+            <span class="panel-count">{{ rankCountText }}</span>
+            <div class="seg">
+              <button :class="{ on: rankMode === 'today' }" @click="rankMode = 'today'">今日</button>
+              <button :class="{ on: rankMode === 'total' }" @click="rankMode = 'total'">总计</button>
+            </div>
+          </div>
         </div>
-        <BookRankingList :books="summary.books" />
+        <!-- key=rankMode：切换口径时重挂载，重播行入场与占比条生长动画 -->
+        <BookRankingList :key="rankMode" :books="rankBooks" :mode="rankMode" />
       </section>
     </div>
   </div>
@@ -63,11 +70,13 @@
 // 阅读统计页：概览卡 + 每日柱状图 + 书籍排行
 // 对应设计文档《阅读时间统计功能设计方案》§9.2
 // 视觉优化对应设计文档《设置与统计页视觉优化设计方案》§5.2
+// 今日 / 总计口径切换对应设计文档《书籍排行今日与总计切换设计方案》§7.3
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { formatDayKey, type ReadingStatsSummary } from '../../shared/types'
 import { IpcError, ipc } from '../services/ipc'
-import { calcStreak, formatDuration } from '../services/readingStats'
+import { calcStreak, formatDuration, pickRankingBooks } from '../services/readingStats'
+import type { RankingMode } from '../services/readingStats'
 import StatCard from '../components/stats/StatCard.vue'
 import DailyBarChart from '../components/stats/DailyBarChart.vue'
 import BookRankingList from '../components/stats/BookRankingList.vue'
@@ -80,6 +89,19 @@ const loading = ref(true)
 const loadError = ref('')
 /** 柱状图窗口（7 / 30 天）；30 天数据一次拉取，切换仅切片不重复请求 */
 const range = ref<7 | 30>(7)
+/** 排行口径（今日 / 总计），默认今日；数据一次拉取，切换仅本地过滤排序不重复请求 */
+const rankMode = ref<RankingMode>('today')
+
+const rankBooks = computed(() =>
+  summary.value ? pickRankingBooks(summary.value.books, rankMode.value) : []
+)
+
+/** 排行面板计数文案：随口径联动 */
+const rankCountText = computed(() =>
+  rankMode.value === 'today'
+    ? `今日 ${rankBooks.value.length} 本`
+    : `共 ${summary.value?.books.length ?? 0} 本`
+)
 
 const isEmpty = computed(() => summary.value !== null && summary.value.totalMs === 0)
 const visibleDays = computed(() => summary.value?.days.slice(-range.value) ?? [])
@@ -181,6 +203,13 @@ onMounted(load)
 .panel-count {
   font-size: 12px;
   color: var(--text-muted);
+}
+
+/* 排行面板头右侧：计数与口径切换控件并列 */
+.panel-head-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
 }
 
 /* 分段控件：7 天 / 30 天切换 */
