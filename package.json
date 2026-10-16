@@ -30,7 +30,7 @@
     "@types/yauzl": "^3.4.0",
     "@vitejs/plugin-vue": "^5.0.4",
     "electron": "^42.11.12",
-    "electron-builder": "^24.13.3",
+    "electron-builder": "^26.15.3",
     "typescript": "^5.2.2",
     "vite": "^5.1.6",
     "vite-plugin-electron": "^0.28.6",
@@ -63,7 +63,8 @@
         "dmg"
       ],
       "category": "public.app-category.books",
-      "identity": null,
+      "identity": "-",
+      "hardenedRuntime": false,
       "artifactName": "IReader-${version}-mac.${ext}"
     },
     "dmg": {

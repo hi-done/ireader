@@ -64,11 +64,11 @@
 | macOS 12+（Apple Silicon 已验收） | `IReader-<版本>-mac.dmg` | ✅ 可用 |
 | Windows 10+（已验收） | `IReader-<版本>-win.exe` | ✅ 可用 |
 
-> **macOS 未签名说明**：当前构建跳过代码签名（`identity: null`），首次打开若被 Gatekeeper 拦截，在应用上**右键 →「打开」**放行一次即可。
+> **macOS 签名说明**：当前构建使用 ad-hoc 签名（`identity: "-"`，无需 Apple 开发者证书）。从浏览器下载安装后首次打开如提示「无法检查它是否包含恶意软件」，前往**系统设置 → 隐私与安全性**，点击「仍要打开」放行一次即可。
 >
 > **Windows 未签名说明**：安装包未签名，首次运行若被 SmartScreen 拦截，点击「更多信息」→「仍要运行」即可放行。
 
-**应用内检查更新**：已安装的用户可在 设置 → 关于 点击「检查更新」。Windows 支持增量更新（只下载变化部分，完成后一键重启静默安装）；macOS 因未签名不支持应用内安装，检查到新版本后会跳转浏览器前往 Release 页下载。
+**应用内检查更新**：已安装的用户可在 设置 → 关于 点击「检查更新」。Windows 支持增量更新（只下载变化部分，完成后一键重启静默安装）；macOS 因无开发者证书签名不支持应用内安装，检查到新版本后会跳转浏览器前往 Release 页下载。
 
 ## ⌨️ 快捷键
 
@@ -139,7 +139,7 @@
 | EPUB 渲染 | epubjs 0.3.x（渲染进程解包 → 分页排版；图片型书自适应缩放） |
 | CBZ 渲染 | yauzl 3.x（主进程按需解压 zip 内图片，经 ireader://cbz/{id}/{page} 逐页供给） |
 | 数据库 | better-sqlite3 12.x（主进程内嵌 SQLite，WAL 模式） |
-| 打包 | electron-builder 24（macOS DMG / Windows NSIS） |
+| 打包 | electron-builder 26（macOS DMG / Windows NSIS） |
 | 测试 | Vitest 1.x（页组划分、封面队列、CBZ 排序与尺寸等纯逻辑，80 个用例） |
 
 ## 🧭 架构
@@ -208,7 +208,7 @@ npm run build      # 类型检查 → vite 构建 → electron-builder
 
 要点：
 
-- macOS 当前**跳过代码签名**（`identity: null`）：首次打开如被 Gatekeeper 拦截，右键应用 →「打开」放行一次即可
+- macOS 当前使用 **ad-hoc 签名**（`identity: "-"`，无需证书；`hardenedRuntime: false` 避免 ad-hoc 下库校验拒绝 Electron 预签名 framework）：下载安装后首次打开如提示「无法检查它是否包含恶意软件」，在 系统设置 → 隐私与安全性 点击「仍要打开」放行一次即可
 - `asarUnpack` 已含 `better-sqlite3`（.node 原生二进制不能从 asar 内加载）
 - Windows NSIS 目标已配置并完成实机验收
 
