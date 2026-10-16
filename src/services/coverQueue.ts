@@ -1,5 +1,5 @@
 // 前端封面生成队列：导入后逐本渲染封面 → cover:submit 回传主进程落盘
-// PDF 用 pdf.js 渲染第 1 页；EPUB 用 epubjs 提取封面图
+// PDF 用 pdf.js 渲染第 1 页；EPUB 用 epubjs 提取封面图；CBZ 拉取压缩包内第一张图
 // 对应设计文档 §4.1 / §8.1：队列空闲时执行、不阻塞 UI；失败的书使用占位封面，不影响阅读
 
 import { reactive } from 'vue'
@@ -7,9 +7,9 @@ import type { Book, BookFormat } from '../../shared/types'
 import { ipc } from './ipc'
 import { loadPdfWithTask, renderCoverThumbnail } from './pdf'
 
-/** 判断一本书是否需要生成封面（无封面且页数未知），提取为纯函数便于单测 */
+/** 判断一本书是否需要生成封面（无封面即需要；页数不再作为判据——CBZ 导入时即已知页数，需照常生成封面） */
 export function needsCoverGeneration(book: Pick<Book, 'coverUrl' | 'totalPages'>): boolean {
-  return !book.coverUrl && !book.totalPages
+  return !book.coverUrl
 }
 
 /** 从书列表中筛出待生成封面的书 id（保持入参顺序） */
@@ -77,7 +77,42 @@ async function renderEpubCoverJpeg(url: string): Promise<ArrayBuffer> {
   }
 }
 
-async function processOne(bookId: number, title: string, format: BookFormat): Promise<void> {
+/** 拉取 CBZ 第一页图片并转成 JPEG（缩到宽 480，只缩不放）；失败抛错走占位逻辑 */
+async function renderCbzCoverJpeg(url: string): Promise<ArrayBuffer> {
+  const res = await fetch(url)
+  if (!res.ok) throw new Error(`加载漫画首页失败（HTTP ${res.status}）`)
+  const blob = new Blob([await res.arrayBuffer()], {
+    type: res.headers.get('Content-Type') ?? '',
+  })
+  const bitmap = await createImageBitmap(blob)
+  try {
+    const targetWidth = 480
+    const scale = Math.min(1, targetWidth / (bitmap.width || 1))
+    const canvas = document.createElement('canvas')
+    canvas.width = Math.max(1, Math.round(bitmap.width * scale))
+    canvas.height = Math.max(1, Math.round(bitmap.height * scale))
+    const ctx = canvas.getContext('2d')
+    if (!ctx) throw new Error('Canvas 2D context unavailable')
+    ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height)
+    const jpeg: Blob = await new Promise((resolve, reject) => {
+      canvas.toBlob(
+        (b) => (b ? resolve(b) : reject(new Error('toBlob failed'))),
+        'image/jpeg',
+        0.8
+      )
+    })
+    return jpeg.arrayBuffer()
+  } finally {
+    bitmap.close()
+  }
+}
+
+async function processOne(
+  bookId: number,
+  title: string,
+  format: BookFormat,
+  totalPages: number
+): Promise<void> {
   coverQueueState.currentTitle = title
   let task: { destroy: () => Promise<void> } | null = null
   try {
@@ -85,6 +120,12 @@ async function processOne(bookId: number, title: string, format: BookFormat): Pr
       const image = await renderEpubCoverJpeg(`ireader://epub/${bookId}`)
       // EPUB 分页数依赖视口、导入时未知，total_pages 保持 0，进度展示走 percentage
       await ipc.cover.submit(bookId, image, 0)
+      return
+    }
+    if (format === 'cbz') {
+      const image = await renderCbzCoverJpeg(`ireader://cbz/${bookId}/1`)
+      // 页数已在导入时按条目统计入库，此处回写同值
+      await ipc.cover.submit(bookId, image, totalPages)
       return
     }
     const loaded = await loadPdfWithTask(`ireader://pdf/${bookId}`)
@@ -103,16 +144,16 @@ async function processOne(bookId: number, title: string, format: BookFormat): Pr
 async function drain(): Promise<void> {
   running = true
   while (queue.length) {
-    const { id, title, format } = queue.shift()!
+    const { id, title, format, totalPages } = queue.shift()!
     queuedIds.delete(id)
-    await processOne(id, title, format)
+    await processOne(id, title, format, totalPages)
     coverQueueState.done++
     coverQueueState.pending = queue.length
   }
   running = false
 }
 
-const queue: { id: number; title: string; format: BookFormat }[] = []
+const queue: { id: number; title: string; format: BookFormat; totalPages: number }[] = []
 
 /** 将书籍加入封面生成队列；已在队列/正在处理的书自动去重 */
 export function enqueueCovers(
@@ -123,7 +164,7 @@ export function enqueueCovers(
 
   for (const b of fresh) {
     queuedIds.add(b.id)
-    queue.push({ id: b.id, title: b.title, format: b.format })
+    queue.push({ id: b.id, title: b.title, format: b.format, totalPages: b.totalPages })
   }
   coverQueueState.pending = queue.length
   coverQueueState.total = coverQueueState.pending

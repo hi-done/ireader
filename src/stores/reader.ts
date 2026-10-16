@@ -1,8 +1,9 @@
 import { defineStore } from 'pinia'
-import { markRaw, ref } from 'vue'
+import { markRaw, ref, shallowRef } from 'vue'
 import type { Direction, ReadingMode, ZoomMode } from '../../shared/types'
 import { ipc } from '../services/ipc'
-import { loadPdfWithTask, type PdfDocument, type PdfLoadingTask } from '../services/pdf'
+import { loadPdfWithTask, type PdfLoadingTask } from '../services/pdf'
+import type { PageDocument } from '../services/pageRenderer'
 import { buildSpreads, findSpreadIndexByPage, type Spread } from '../services/spread'
 import { useSettingsStore } from './settings'
 
@@ -10,8 +11,9 @@ let saveTimer: ReturnType<typeof setTimeout> | null = null
 
 export const useReaderStore = defineStore('reader', () => {
   const bookId = ref<number | null>(null)
-  const doc = ref<PdfDocument | null>(null)
-  /** 与 doc 配套的 loadingTask，close 时销毁以释放 pdf.js worker 资源 */
+  // shallowRef：ref 的 UnwrapRef 会深度展开 pdf 文档对象并丢失类私有字段，_value 与 PageDocument 不再兼容
+  const doc = shallowRef<PageDocument | null>(null)
+  /** PDF 文档配套的 loadingTask，close 时销毁以释放 pdf.js worker 资源；CBZ 无长生命周期句柄故恒为 null */
   let loadingTask: PdfLoadingTask | null = null
   const numPages = ref(0)
   const mode = ref<ReadingMode>('single')
@@ -39,10 +41,17 @@ export const useReaderStore = defineStore('reader', () => {
 
     const result = await ipc.reader.open(id)
     bookId.value = id
-    const loaded = await loadPdfWithTask(result.fileUrl)
-    loadingTask = loaded.task
-    doc.value = markRaw(loaded.doc)
-    numPages.value = result.numPages || loaded.doc.numPages
+    if (result.format === 'cbz') {
+      // 页数来自导入时的图片条目统计；为 0 说明压缩包不可用，与 PDF 加载失败同样进错误页
+      if (result.numPages <= 0) throw new Error('压缩包中没有可识别的图片')
+      doc.value = markRaw({ kind: 'cbz' as const, bookId: id })
+      numPages.value = result.numPages
+    } else {
+      const loaded = await loadPdfWithTask(result.fileUrl)
+      loadingTask = loaded.task
+      doc.value = markRaw({ kind: 'pdf' as const, pdf: loaded.doc })
+      numPages.value = result.numPages || loaded.doc.numPages
+    }
 
     const progress = result.progress
     mode.value = progress?.mode ?? settingsStore.settings.defaultMode

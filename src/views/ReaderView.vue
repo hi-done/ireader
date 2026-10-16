@@ -110,7 +110,7 @@ import { useSettingsStore } from '../stores/settings'
 import { ipc } from '../services/ipc'
 import { getFromCache, putToCache, clearCache } from '../services/pageCache'
 import { playPageCurl, type PageCurlHandle } from '../services/pageCurl'
-import { renderPageToCanvas, type PdfDocument, type RenderPageOptions } from '../services/pdf'
+import { renderPageToCanvas, type PageDocument, type RenderPageOptions } from '../services/pageRenderer'
 import { startTracking, stopTracking, setTrackingPaused } from '../services/readingTracker'
 import EpubReaderView from './EpubReaderView.vue'
 
@@ -438,7 +438,7 @@ function blit(src: HTMLCanvasElement, dst: HTMLCanvasElement): void {
  *  seq 作废检查必须覆盖慢路径贴图：被新渲染循环作废的旧循环，其迟到渲染
  *  只入缓存、不得贴图——否则旧页内容会在松手动画前后覆盖新页，看起来像动画反复播放 */
 async function paintPage(
-  doc: PdfDocument,
+  doc: PageDocument,
   page: number,
   display: HTMLCanvasElement,
   seq: number
@@ -458,9 +458,9 @@ async function paintPage(
 }
 
 async function renderCurrentSpread() {
-  if (!reader.doc) return
+  const doc = reader.doc
+  if (!doc) return
   const seq = ++renderSeq
-  const doc = reader.doc as PdfDocument
   // 双页并行渲染：松手后的等待时间近似减半；作废检查在 paintPage 内部按 seq 拦截
   await Promise.all(
     currentDisplayPages.value.map((page, i) => {
@@ -476,7 +476,7 @@ async function renderCurrentSpread() {
 }
 
 /** 当前组渲染完成后，异步预取后续页组与前一页组（数量取设置 preloadSpreads，0–4） */
-async function prefetchNeighbors(doc: PdfDocument): Promise<void> {
+async function prefetchNeighbors(doc: PageDocument): Promise<void> {
   const count = settingsStore.settings.preloadSpreads
   if (count <= 0 || reader.bookId == null) return
   const bookId = reader.bookId

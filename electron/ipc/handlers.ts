@@ -66,7 +66,7 @@ export function registerIpcHandlers(getWin: () => BrowserWindow | null): void {
     if (!win) return ok(null)
     const { canceled, filePaths } = await dialog.showOpenDialog(win, {
       properties: ['openFile', 'multiSelections'],
-      filters: [{ name: '电子书', extensions: ['pdf', 'epub'] }],
+      filters: [{ name: '书籍与漫画', extensions: ['pdf', 'epub', 'zip', 'cbz'] }],
     })
     return ok(canceled ? null : filePaths)
   })
@@ -82,8 +82,8 @@ export function registerIpcHandlers(getWin: () => BrowserWindow | null): void {
 
   ipcMain.handle(
     'library:import',
-    wrap((payload: { paths: string[]; collectionId?: number | null }) => {
-      const result = libraryService.importPaths(payload.paths, payload.collectionId ?? null)
+    wrapAsync(async (payload: { paths: string[]; collectionId?: number | null }) => {
+      const result = await libraryService.importPaths(payload.paths, payload.collectionId ?? null)
       if (result.added.length) {
         notifyLibraryChanged(
           getWin(),

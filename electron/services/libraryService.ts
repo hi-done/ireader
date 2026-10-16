@@ -8,15 +8,20 @@ import { collectionsRepo } from '../db/repos/collectionsRepo'
 import { progressRepo, toReadingProgress } from '../db/repos/progressRepo'
 import type { Book } from '../../shared/types'
 import { getCoverUrl } from './coverService'
+import { countPages } from './cbzService'
+import * as logger from './logger'
 
-const SUPPORTED_EXTS = ['.pdf', '.epub']
+const SUPPORTED_EXTS = ['.pdf', '.epub', '.zip', '.cbz']
 
-/** 按扩展名派生书格式（未知扩展名按 PDF 处理，兼容旧数据） */
+/** 按扩展名派生书格式（.zip/.cbz 归一为 cbz；未知扩展名按 PDF 处理，兼容旧数据） */
 export function detectFormat(filePath: string): Book['format'] {
-  return path.extname(filePath).toLowerCase() === '.epub' ? 'epub' : 'pdf'
+  const ext = path.extname(filePath).toLowerCase()
+  if (ext === '.epub') return 'epub'
+  if (ext === '.zip' || ext === '.cbz') return 'cbz'
+  return 'pdf'
 }
 
-/** 递归展开文件/文件夹路径为去重后的 PDF/EPUB 绝对路径列表 */
+/** 递归展开文件/文件夹路径为去重后的 PDF/EPUB/CBZ 绝对路径列表 */
 function collectBookPaths(inputPaths: string[]): string[] {
   const result = new Set<string>()
 
@@ -68,13 +73,14 @@ function rowToBook(row: BookRow): Book {
 
 export const libraryService = {
   /**
-   * 导入文件/文件夹列表，递归扫描 PDF/EPUB 并按路径去重落库。
+   * 导入文件/文件夹列表，递归扫描 PDF/EPUB/CBZ 并按路径去重落库。
    * collectionId 非 null 时新导入的书直接归属该合集（合集视图内导入）。
+   * CBZ 在导入时统计图片条目数写入 total_pages，避免「封面队列未完成时打开页数为 0」竞态。
    */
-  importPaths(
+  async importPaths(
     inputPaths: string[],
     collectionId: number | null = null
-  ): { added: Book[]; skipped: number } {
+  ): Promise<{ added: Book[]; skipped: number }> {
     if (collectionId !== null && !collectionsRepo.exists(collectionId)) {
       throw { code: 'FILE_NOT_FOUND', message: 'collection not found' }
     }
@@ -89,12 +95,24 @@ export const libraryService = {
       }
       const stat = fs.statSync(filePath)
       const title = path.basename(filePath, path.extname(filePath))
+      let totalPages = 0
+      if (detectFormat(filePath) === 'cbz') {
+        try {
+          totalPages = await countPages(filePath)
+        } catch (e) {
+          // 统计失败不中止导入：书仍入库（0 页），由封面队列与打开时错误兜底
+          logger.warn(
+            `[libraryService] cbz 页数统计失败：${filePath}（${e instanceof Error ? e.message : String(e)}）`
+          )
+        }
+      }
       const row = booksRepo.insert({
         title,
         filePath,
         fileSize: stat.size,
         addedAt: Date.now(),
         collectionId,
+        totalPages,
       })
       added.push(rowToBook(row))
     }

@@ -21,11 +21,13 @@
     "pdfjs-dist": "^4.10.38",
     "pinia": "^4.0.3",
     "vue": "^3.4.21",
-    "vue-router": "^4.6.4"
+    "vue-router": "^4.6.4",
+    "yauzl": "^3.4.0"
   },
   "devDependencies": {
     "@electron/rebuild": "^4.2.1",
     "@types/better-sqlite3": "^9.6.0",
+    "@types/yauzl": "^3.4.0",
     "@vitejs/plugin-vue": "^5.0.4",
     "electron": "^42.11.12",
     "electron-builder": "^24.13.3",

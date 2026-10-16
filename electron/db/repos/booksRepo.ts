@@ -22,6 +22,8 @@ export interface NewBookInput {
   addedAt: number
   /** 导入时直接归属的合集（可选） */
   collectionId?: number | null
+  /** 导入时已知的总页数（CBZ 按图片条目统计）；缺省 0，由封面提交流程补写 */
+  totalPages?: number
 }
 
 export const booksRepo = {
@@ -41,9 +43,9 @@ export const booksRepo = {
     const result = getDatabase()
       .prepare(
         `INSERT INTO books (title, file_path, file_size, total_pages, cover_path, added_at, last_opened_at, collection_id)
-         VALUES (@title, @filePath, @fileSize, 0, NULL, @addedAt, NULL, @collectionId)`
+         VALUES (@title, @filePath, @fileSize, @totalPages, NULL, @addedAt, NULL, @collectionId)`
       )
-      .run({ collectionId: null, ...input })
+      .run({ totalPages: 0, collectionId: null, ...input })
     return this.findById(Number(result.lastInsertRowid))!
   },
 
