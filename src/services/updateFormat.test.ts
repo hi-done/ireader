@@ -63,4 +63,40 @@ describe('cleanReleaseNotes 更新说明清洗', () => {
   it('空串安全', () => {
     expect(cleanReleaseNotes('')).toBe('')
   })
+
+  it('连续完全相同的段落折叠为一', () => {
+    expect(cleanReleaseNotes('A\n\nA\n\nB')).toBe('A\n\nB')
+  })
+})
+
+describe('cleanReleaseNotes HTML 清洗（releases.atom 实态）', () => {
+  it('HTML 段落剥标签保留文字（实际发布形态）', () => {
+    const html =
+      '<p><strong>Full Changelog</strong>: <a class="commit-link" href="https://github.com/hi-done/ireader/compare/v1.2.0...v1.2.1"><tt>v1.2.0...v1.2.1</tt></a></p>'
+    expect(cleanReleaseNotes(html)).toBe('Full Changelog: v1.2.0...v1.2.1')
+  })
+
+  it('块级标签转换行，段落各自成行', () => {
+    expect(cleanReleaseNotes('<p>第一段</p><p>第二段</p>')).toBe('第一段\n第二段')
+    expect(cleanReleaseNotes('<p>第一段</p>\n<p>第二段</p>')).toBe('第一段\n\n第二段')
+  })
+
+  it('列表项各自成行', () => {
+    expect(cleanReleaseNotes('<ul><li>甲</li><li>乙</li></ul>')).toBe('甲\n乙')
+  })
+
+  it('HTML 图片整体移除', () => {
+    expect(cleanReleaseNotes('<p>看图 <img src="https://x.com/i.png" alt="image"></p>')).toBe('看图')
+  })
+
+  it('常见实体解码，&amp; 不二次解码', () => {
+    expect(cleanReleaseNotes('<p>A &amp; B &lt;tag&gt; &quot;q&quot;</p>')).toBe('A & B <tag> "q"')
+  })
+
+  it('整段重复两遍折叠为一（v1.2.1 实测场景）', () => {
+    const html =
+      '<p><strong>Full Changelog</strong>: <a class="commit-link" href="https://github.com/hi-done/ireader/compare/v1.2.0...v1.2.1"><tt>v1.2.0...v1.2.1</tt></a></p>\n' +
+      '<p><strong>Full Changelog</strong>: <a class="commit-link" href="https://github.com/hi-done/ireader/compare/v1.2.0...v1.2.1"><tt>v1.2.0...v1.2.1</tt></a></p>'
+    expect(cleanReleaseNotes(html)).toBe('Full Changelog: v1.2.0...v1.2.1')
+  })
 })

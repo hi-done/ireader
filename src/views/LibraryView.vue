@@ -892,6 +892,10 @@ function askDissolve() {
   padding: 24px 40px;
   /* 卡片按自身内容高度排列，避免同行等高拉伸出底部空白 */
   align-items: start;
+  /* 容器被 flex:1 撑满视口高度时，默认 align-content:stretch 会把多余空间
+     摊给每条行轨道，行高被拉长、卡片停在行顶，视觉上像行间距巨大；
+     改为 start 让行轨道只占内容高度，从顶部紧密排列 */
+  align-content: start;
 }
 
 .cover-progress {

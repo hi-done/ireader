@@ -92,4 +92,9 @@ jobs:
             release/*/IReader-*-win.exe
             release/*/IReader-*-win.exe.blockmap
             release/*/latest.yml
-          generate_release_notes: true
+          # 本步骤在 mac / win 两个 matrix 任务中各执行一次（各自上传本平台产物），
+          # generate_release_notes 仅由 Windows 任务开启：两边都开启时，第二次执行会把
+          # 同一段生成说明再次叠加进 body（实测 v1.2.0 / v1.2.1 的 Full Changelog 段重复两遍）；
+          # macOS 任务不生成说明，命中 action「已有 Release 未显式设置的信息键保留原值」的语义，
+          # 无论两个任务的完成顺序如何，body 中都只会出现一份生成说明
+          generate_release_notes: ${{ runner.os == 'Windows' }}
