@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import { computed, ref, watch } from 'vue'
 import type { Book, Collection, SortBy, SortOrder } from '../../shared/types'
 import { ipc } from '../services/ipc'
+import { filterCollectionsByKeyword, sortBooks, sortCollections } from '../services/libraryList'
 
 const SORT_PREF_KEY = 'ireader.sort'
 const SORT_BY_VALUES: SortBy[] = ['lastOpenedAt', 'addedAt', 'title']
@@ -49,15 +50,19 @@ export const useLibraryStore = defineStore('library', () => {
 
   const filteredBooks = computed(() => {
     const kw = keyword.value.trim().toLowerCase()
-    let list = kw ? books.value.filter((b) => b.title.toLowerCase().includes(kw)) : books.value
-    list = [...list].sort((a, b) => {
-      const dir = sortOrder.value === 'asc' ? 1 : -1
-      if (sortBy.value === 'title') return a.title.localeCompare(b.title) * dir
-      if (sortBy.value === 'addedAt') return (a.addedAt - b.addedAt) * dir
-      return ((a.lastOpenedAt ?? 0) - (b.lastOpenedAt ?? 0)) * dir
-    })
-    return list
+    const list = kw ? books.value.filter((b) => b.title.toLowerCase().includes(kw)) : books.value
+    return sortBooks(list, sortBy.value, sortOrder.value)
   })
+
+  /** 主页合集卡：关键字命中合集名或集内书名时保留，并按当前排序偏好排列 */
+  const sortedCollections = computed(() =>
+    sortCollections(
+      filterCollectionsByKeyword(collections.value, books.value, keyword.value),
+      books.value,
+      sortBy.value,
+      sortOrder.value
+    )
+  )
 
   /** silent=true 时不触发整页 loading（用于后台事件驱动的刷新） */
   async function refresh(options: { silent?: boolean } = {}) {
@@ -138,6 +143,7 @@ export const useLibraryStore = defineStore('library', () => {
     sortOrder,
     loading,
     filteredBooks,
+    sortedCollections,
     refresh,
     importPaths,
     remove,

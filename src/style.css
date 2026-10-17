@@ -112,8 +112,13 @@ body {
   padding-left: 84px;
 }
 
-/* 页面头（设置 / 阅读统计等二级页）：与 .collection-head 同规范 */
+/* 页面头（设置 / 阅读统计等二级页）：与 .collection-head 同规范；
+   吸顶固定：滚动容器为 .settings-view / .stats-view，内容从毛玻璃下穿过；
+   z-index 10 高于内容层，低于图表 tooltip(30) / 对话框(100) / toast(200) */
 .page-head {
+  position: sticky;
+  top: 0;
+  z-index: 10;
   display: flex;
   align-items: center;
   gap: 20px;

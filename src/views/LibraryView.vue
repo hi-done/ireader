@@ -51,7 +51,7 @@
           {{ library.sortOrder === 'asc' ? '↑ 升序' : '↓ 降序' }}
         </button>
         <span v-if="library.keyword" class="result-count">
-          {{ library.filteredBooks.length }} 本
+          {{ resultSummary }}
         </span>
       </div>
       <button class="ghost" @click="creatingCollection = true">＋ 新建合集</button>
@@ -115,10 +115,13 @@
       </aside>
     </div>
 
-    <!-- 主页：合集卡片（名称升序）+ 未分组书（当前排序） -->
-    <section v-else-if="ungroupedBooks.length || visibleCollections.length" class="book-grid">
+    <!-- 主页：合集卡片始终排在图书卡片之前，两类各自走当前排序偏好 -->
+    <section
+      v-else-if="ungroupedBooks.length || library.sortedCollections.length"
+      class="book-grid"
+    >
       <CollectionCard
-        v-for="c in visibleCollections"
+        v-for="c in library.sortedCollections"
         :key="'c' + c.id"
         :collection="c"
         :books="booksInCollection(c.id)"
@@ -136,7 +139,7 @@
     </section>
 
     <section v-else class="state-tip empty">
-      <p>{{ library.keyword ? '没有匹配的书' : '文库还是空的' }}</p>
+      <p>{{ library.keyword ? '没有匹配的内容' : '文库还是空的' }}</p>
       <div v-if="!library.keyword" class="empty-actions">
         <button class="btn-primary" @click="onImportFiles">导入书籍</button>
         <button class="ghost" @click="onImportFolder">导入文件夹</button>
@@ -371,13 +374,18 @@ const activeCollection = computed(
   () => library.collections.find((c) => c.id === activeCollectionId.value) ?? null
 )
 
-/** 主页展示的合集卡：按名称升序，不参与书的排序偏好 */
-const visibleCollections = computed(() =>
-  [...library.collections].sort((a, b) => a.title.localeCompare(b.title, 'zh-Hans-CN'))
-)
-
 /** 主页网格中的书：仅未分组，走用户排序偏好（filteredBooks 已排序） */
 const ungroupedBooks = computed(() => library.filteredBooks.filter((b) => !b.collectionId))
+
+/** 搜索态结果提示：合集数 + 全库命中书数（含合集内），为零的侧不显示 */
+const resultSummary = computed(() => {
+  const parts: string[] = []
+  const collectionCount = library.sortedCollections.length
+  const bookCount = library.filteredBooks.length
+  if (collectionCount) parts.push(`${collectionCount} 个合集`)
+  if (bookCount) parts.push(`${bookCount} 本`)
+  return parts.length ? parts.join(' · ') : '无匹配'
+})
 
 /** 合集视图内的书：固定名称升序（与封面取书规则一致） */
 const collectionBooks = computed(() =>
