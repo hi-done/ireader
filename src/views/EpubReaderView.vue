@@ -566,7 +566,7 @@ function onSlideChange(e: Event) {
   }, 400)
 }
 
-/** 滑块松手收尾：等最终跳页与视图稳定后，从拖动开始画面补播一次卷曲（对齐 PDF finishSlideWithCurl） */
+/** 滑块松手收尾：等最终跳页与视图稳定后，从拖动开始画面补播一次卷曲（对齐 PDF finishSlide） */
 async function finishSlideCurl(finalIndex: number): Promise<void> {
   const startIndex = slideStartIndex
   const startCfi = slideStartCfi

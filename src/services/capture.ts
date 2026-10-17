@@ -1,5 +1,5 @@
 // 窗口区域截图（渲染层）：经 window:captureRegion 取 PNG 像素 → 合成 canvas 快照
-// 快照约定与 PDF 侧 snapshotVisible 一致：物理像素尺寸 + style 为逻辑尺寸（供 pageCurl 使用）
+// 快照约定与 PDF 侧 snapshotForTurn 一致：物理像素尺寸 + style 为逻辑尺寸（供 pageCurl 使用）
 
 import type { CaptureRegionRect } from '../../shared/types'
 import { ipc } from './ipc'

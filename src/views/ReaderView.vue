@@ -112,6 +112,12 @@ import { getFromCache, putToCache, clearCache } from '../services/pageCache'
 import { playPageCurl, type PageCurlHandle } from '../services/pageCurl'
 import { renderPageToCanvas, type PageDocument, type RenderPageOptions } from '../services/pageRenderer'
 import { startTracking, stopTracking, setTrackingPaused } from '../services/readingTracker'
+import {
+  normalizeWheelDelta,
+  stepShiftWheelScroll,
+  stepWheelScroll,
+  type WheelScrollState,
+} from '../services/wheelScroll'
 import EpubReaderView from './EpubReaderView.vue'
 
 const route = useRoute()
@@ -137,6 +143,13 @@ let renderSeq = 0
 /** 预取序号：翻页后作废旧的邻组预取循环 */
 let prefetchSeq = 0
 const pageAreaEl = ref<HTMLElement | null>(null)
+/** 滚轮手势状态：纵向与 Shift 共用；横向纯移动不写入该状态 */
+let wheelScrollState: WheelScrollState = {
+  edgeAccum: 0,
+  turnedInGesture: false,
+  lastEventAt: 0,
+  lastDir: 0,
+}
 
 // —— 翻页动画（仿真纸张卷曲，pageCurl.ts）——
 /** 'forward'/'back' 为阅读流方向；null 表示本次重渲染不是翻页（模式/方向切换等），不播动画 */
@@ -227,6 +240,7 @@ function openBook(id: number) {
     .then(async () => {
       await nextTick()
       await renderCurrentSpread()
+      resetPageScroll('top') // 新书/切换书籍从页首开始，避免复用组件残留旧滚动位置
       showBarsTemporarily()
     })
     .catch((e) => {
@@ -308,24 +322,31 @@ watch(currentDisplayPages, async () => {
     return
   }
 
-  // 翻页：先截取旧画面快照，供卷曲动画使用
+  // 翻页：先截取旧画面快照，供卷曲动画使用。
+  // 旧页纵向溢出时用可视区快照：完整内容快照从页首绘制，用户在页底时动画会错位
   let fromSnap: HTMLCanvasElement | null = null
+  let viewportSnap = false
   if (isPageTurn && !reducedMotion) {
     curlHandle?.cancel() // 连续翻页时立即揭除上一次动画
-    fromSnap = snapshotVisible()
+    viewportSnap = isVerticallyScrollable()
+    fromSnap = snapshotForTurn(viewportSnap)
   }
 
   await nextTick()
   await renderCurrentSpread()
 
+  // 翻页落点：前进置顶、后退置底；模式/方向切换不改变当前滚动位置
+  if (isPageTurn) resetPageScroll(turnDir === 'back' ? 'bottom' : 'top')
+
   // 新组渲染完成后，用旧/新快照播放纸张翻页动画（覆盖层，结束后底下已是新页）
-  if (fromSnap && rootEl.value && pageContentEl.value) {
-    const toSnap = snapshotVisible()
-    if (toSnap) {
+  if (fromSnap && rootEl.value) {
+    const toSnap = snapshotForTurn(viewportSnap)
+    const target = viewportSnap ? pageAreaEl.value : pageContentEl.value
+    if (toSnap && target) {
       const fromRight = (turnDir === 'forward') === (reader.direction === 'ltr')
       curlHandle = playPageCurl({
         container: rootEl.value,
-        target: pageContentEl.value,
+        target,
         from: fromSnap,
         to: toSnap,
         fromRight,
@@ -335,21 +356,24 @@ watch(currentDisplayPages, async () => {
   }
 })
 
-/** 将当前显示画面合成为一张快照（以 .page-content 显示盒为坐标系；双页含两页，含 dpr 物理像素）。
+/** 将当前显示画面合成为一张快照。
+ *  viewport=true：以 .page-area 可视区为裁剪框，只保留当前可见切片（含滚动偏移），黑底填充；
+ *  viewport=false：沿用 .page-content 显示盒坐标系（双页含两页，含 dpr 物理像素）。
  *  几何取自各 canvas 的实际显示矩形（getBoundingClientRect）而非 style 尺寸——
- *  快照必须复刻“用户实际看到的画面”，CSS 居中/钳制等布局结果都被如实包含 */
-function snapshotVisible(): HTMLCanvasElement | null {
-  const content = pageContentEl.value
-  if (!content) return null
-  const list = currentDisplayPages.value
-    .map((_, i) => canvasEls.value[i])
-    .filter((c): c is HTMLCanvasElement => !!c && c.width > 0)
+ *  快照必须复刻“用户实际看到的画面”，CSS 居中/滚动等布局结果都被如实包含 */
+function snapshotForTurn(viewport: boolean): HTMLCanvasElement | null {
+  const frame = viewport ? pageAreaEl.value : pageContentEl.value
+  if (!frame) return null
+  // 遍历当前仍挂载的 canvas，而不是按新页组长度索引：页组数量变化时旧 DOM 仍在
+  const list = canvasEls.value.filter(
+    (c): c is HTMLCanvasElement => !!c && c.isConnected && c.width > 0
+  )
   if (!list.length) return null
 
   const dpr = window.devicePixelRatio || 1
-  const contentRect = content.getBoundingClientRect()
-  const cssW = contentRect.width
-  const cssH = contentRect.height
+  const frameRect = frame.getBoundingClientRect()
+  const cssW = frameRect.width
+  const cssH = frameRect.height
 
   const snap = document.createElement('canvas')
   snap.width = Math.max(1, Math.round(cssW * dpr))
@@ -359,13 +383,19 @@ function snapshotVisible(): HTMLCanvasElement | null {
   const sctx = snap.getContext('2d')
   if (!sctx) return null
 
-  // 每页按其实际显示矩形贴入（相对显示盒坐标）：对页紧贴、垂直居中随实际布局自然成立
+  if (viewport) {
+    // 阅读区背景为黑色：横向留白不透出新页内容
+    sctx.fillStyle = '#000'
+    sctx.fillRect(0, 0, snap.width, snap.height)
+  }
+
+  // 每页按其实际显示矩形贴入（相对裁剪框坐标）：越界部分由画布自动裁剪
   for (const c of list) {
     const rect = c.getBoundingClientRect()
     sctx.drawImage(
       c,
-      (rect.left - contentRect.left) * dpr,
-      (rect.top - contentRect.top) * dpr,
+      (rect.left - frameRect.left) * dpr,
+      (rect.top - frameRect.top) * dpr,
       rect.width * dpr,
       rect.height * dpr
     )
@@ -413,6 +443,8 @@ let sliderActive = false
 let sliderUntil = 0
 let slideFromSnap: HTMLCanvasElement | null = null
 let slideDir: 'forward' | 'back' | null = null
+/** 起点快照是否用了视口裁剪：决定松手后 to 快照与卷曲目标 */
+let slideFromViewport = false
 
 /** 缓存签名：视口/模式/缩放任一变化都会使旧位图自然失效。
  *  v2 前缀：渲染尺寸去掉 MARGIN 边距后与旧位图不兼容，前缀变更使旧缓存整体失效 */
@@ -536,9 +568,14 @@ function onHotzoneClick(side: 'left' | 'right') {
 function onSlide(e: Event) {
   const idx = Number((e.target as HTMLInputElement).value)
   if (idx !== reader.currentIndex) {
-    // 记录瞬切前画面与方向，供松手时播放唯一一次动画
+    // 记录瞬切前画面、方向与快照模式，供松手时播放唯一一次动画
     slideDir = idx > reader.currentIndex ? 'forward' : 'back'
-    slideFromSnap = snapshotVisible() ?? slideFromSnap
+    const viewport = isVerticallyScrollable()
+    const snap = snapshotForTurn(viewport)
+    if (snap) {
+      slideFromSnap = snap
+      slideFromViewport = viewport
+    }
     sliderActive = true
     sliderUntil = Date.now() + 1000 // 兜底：change 丢失时 1s 后恢复动画
     reader.goTo(idx)
@@ -548,33 +585,36 @@ function onSlide(e: Event) {
 function onSlideEnd() {
   const fromSnap = slideFromSnap
   const dir = slideDir
+  const viewport = slideFromViewport
   slideFromSnap = null
   slideDir = null
   if (!sliderActive) return
-  if (!fromSnap || !dir || reducedMotion || !rootEl.value || !pageContentEl.value) {
-    sliderActive = false
-    sliderUntil = 0
-    return
-  }
-  void finishSlideWithCurl(fromSnap, dir)
+  void finishSlide(fromSnap, dir, viewport)
 }
 
-/** 松手收尾：先等目标组渲染完成（仍处拖动态、贴图无淡入），再播唯一一次卷曲动画。
- *  若不等渲染就播动画，揭层后 blit 又更新内容，看起来像动画播了多次 */
-async function finishSlideWithCurl(fromSnap: HTMLCanvasElement, dir: 'forward' | 'back') {
+/** 松手收尾：先等目标组渲染完成（仍处拖动态、贴图无淡入），再复位落点并播唯一一次卷曲。
+ *  即使没有起点快照或系统减弱动态效果，也必须完成渲染与复位，不能停留在旧页/旧滚动位置 */
+async function finishSlide(
+  fromSnap: HTMLCanvasElement | null,
+  dir: 'forward' | 'back' | null,
+  viewport: boolean
+) {
   const idx = reader.currentIndex
   await renderCurrentSpread() // 序号机制会作废拖动中遗留的旧渲染循环
   if (reader.currentIndex !== idx) return // 期间用户又拖动，交给新一轮流程
   sliderActive = false
   sliderUntil = 0
-  if (!rootEl.value || !pageContentEl.value) return
-  const toSnap = snapshotVisible()
+  resetPageScroll(dir === 'back' ? 'bottom' : 'top')
+  if (!fromSnap || !dir || reducedMotion || !rootEl.value) return
+  const target = viewport ? pageAreaEl.value : pageContentEl.value
+  if (!target) return
+  const toSnap = snapshotForTurn(viewport)
   if (!toSnap) return
   curlHandle?.cancel()
   const fromRight = (dir === 'forward') === (reader.direction === 'ltr')
   curlHandle = playPageCurl({
     container: rootEl.value,
-    target: pageContentEl.value,
+    target,
     from: fromSnap,
     to: toSnap,
     fromRight,
@@ -590,10 +630,83 @@ function onWheel(e: WheelEvent) {
     stepZoom(e.deltaY < 0 ? 0.1 : -0.1)
     return
   }
-  if (wheelLock || Math.abs(e.deltaY) < 20) return
+  const target = e.target as HTMLElement
+  if (target.tagName === 'INPUT' || target.tagName === 'SELECT' || target.tagName === 'TEXTAREA') {
+    return // 滑块、缩放下拉等控件保留自己的滚轮行为
+  }
+
+  const area = pageAreaEl.value
+  if (!area) return
+  const delta = normalizeWheelDelta(e, area.clientHeight)
+  if (Math.abs(delta) < 0.5) return // 触控板噪声
+
+  const hScrollable = isHorizontallyScrollable()
+  const vScrollable = isVerticallyScrollable()
+
+  // Shift+滚轮：横向优先，到左/右缘后转为上/下移动；横向无溢出时等同普通滚轮
+  if (e.shiftKey && (hScrollable || vScrollable)) {
+    e.preventDefault()
+    const r = stepShiftWheelScroll(wheelScrollState, {
+      delta,
+      scrollLeft: area.scrollLeft,
+      scrollWidth: area.scrollWidth,
+      clientWidth: area.clientWidth,
+      scrollTop: area.scrollTop,
+      scrollHeight: area.scrollHeight,
+      clientHeight: area.clientHeight,
+      now: performance.now(),
+    })
+    wheelScrollState = r.state
+    area.scrollLeft = r.scrollLeft
+    area.scrollTop = r.scrollTop
+    if (r.turn === 'next') reader.next()
+    else if (r.turn === 'prev') reader.prev()
+    return
+  }
+
+  // 无 Shift 的横向滚轮/触控板横滑：保留原生横向滚动
+  if (!e.shiftKey && Math.abs(e.deltaX) > Math.abs(e.deltaY)) return
+
+  if (vScrollable) {
+    e.preventDefault()
+    const r = stepWheelScroll(wheelScrollState, {
+      deltaY: delta,
+      scrollTop: area.scrollTop,
+      scrollHeight: area.scrollHeight,
+      clientHeight: area.clientHeight,
+      now: performance.now(),
+    })
+    wheelScrollState = r.state
+    area.scrollTop = r.scrollTop
+    if (r.turn === 'next') reader.next()
+    else if (r.turn === 'prev') reader.prev()
+    return
+  }
+
+  // 页面无可滚动内容：保留原翻页逻辑（20px 阈值 + 250ms 冷却）
+  if (wheelLock || Math.abs(delta) < 20) return
   wheelLock = true
   setTimeout(() => (wheelLock = false), 250)
-  e.deltaY > 0 ? reader.next() : reader.prev()
+  delta > 0 ? reader.next() : reader.prev()
+}
+
+/** 纵向是否有可滚动余量（1px 内视为舍入误差） */
+function isVerticallyScrollable(): boolean {
+  const area = pageAreaEl.value
+  return !!area && area.scrollHeight > area.clientHeight + 1
+}
+
+function isHorizontallyScrollable(): boolean {
+  const area = pageAreaEl.value
+  return !!area && area.scrollWidth > area.clientWidth + 1
+}
+
+/** 翻页后的落点：前进置顶、后退置底；横向统一回左缘，避免残留旧平移 */
+function resetPageScroll(anchor: 'top' | 'bottom'): void {
+  const area = pageAreaEl.value
+  if (!area) return
+  area.scrollTop = anchor === 'bottom' ? area.scrollHeight : 0 // 浏览器自动夹取到最大值
+  area.scrollLeft = 0
 }
 
 function stepZoom(delta: number) {
