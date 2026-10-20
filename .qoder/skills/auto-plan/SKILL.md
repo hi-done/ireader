@@ -47,8 +47,8 @@ description: 为 IReader 生成功能方案设计文档并等待用户确认：�
 
 ## 步骤 4：成稿 specs/<功能名>设计方案.md
 
-1. 位置与命名：`specs/<功能名>设计方案.md`（中文文件名，与现有文档同级同风格）。
-2. 文档头固定引用块四行：状态（设计稿）、目标版本（读 package.json 当前 version 推导并与用户确认：新功能 minor、修复/小改 patch）、范围、实现约束（引用 ireader-dev-tasks 与 ireader-code-conventions）。
+1. 位置与命名：`specs/<功能名>设计方案-日期.md`（中文文件名，与现有文档同级同风格，新增日期格式为20261020）。
+2. 文档头固定引用块四行：状态（设计稿）、目标版本（读 package.json 当前 version ，版本号不变，由用户自行发版时确定）、范围、实现约束（引用 ireader-dev-tasks 与 ireader-code-conventions）。
 3. 章节骨架与写作要求（按功能类型裁剪，不涉及即删，不留空章节）：
 
 | 章节 | 写作要求 |
