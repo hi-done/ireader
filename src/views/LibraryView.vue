@@ -769,30 +769,19 @@ function askDissolve() {
   }
 }
 
-/* —— 合集视图头部 —— */
-.collection-head {
-  display: flex;
-  align-items: center;
-  gap: 20px;
-  padding: 18px 40px;
-  background: var(--surface-alpha);
-  backdrop-filter: blur(20px) saturate(180%);
-  border-bottom: 1px solid var(--border);
-}
-
+/* —— 合集视图头部：布局与标题字号走全局 .collection-head / .collection-title（style.css），
+   此处只保留合集页独有的元素排版差异 —— */
 .collection-head-info {
   flex: 1;
   min-width: 0;
   display: flex;
-  align-items: baseline;
+  /* meta 与标题垂直中心对齐（参考设置页页头元素的对齐方式），不再按基线对齐 */
+  align-items: center;
   gap: 12px;
 }
 
 .collection-title {
   margin: 0;
-  font-size: 22px;
-  font-weight: 600;
-  letter-spacing: -0.01em;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

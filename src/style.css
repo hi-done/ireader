@@ -112,13 +112,11 @@ body {
   padding-left: 84px;
 }
 
-/* 页面头（设置 / 阅读统计等二级页）：与 .collection-head 同规范；
-   吸顶固定：滚动容器为 .settings-view / .stats-view，内容从毛玻璃下穿过；
-   z-index 10 高于内容层，低于图表 tooltip(30) / 对话框(100) / toast(200) */
-.page-head {
-  position: sticky;
-  top: 0;
-  z-index: 10;
+/* 页面头（设置 / 阅读统计等二级页 / 文库合集页）：布局单点定义，视图 scoped 只保留差异部分；
+   吸顶固定仅二级页需要：滚动容器为 .settings-view / .stats-view，内容从毛玻璃下穿过
+   （文库视图整页不滚动，合集头天然常驻顶部，不声明 sticky） */
+.page-head,
+.collection-head {
   display: flex;
   align-items: center;
   gap: 20px;
@@ -128,7 +126,15 @@ body {
   border-bottom: 1px solid var(--border);
 }
 
-.page-head h1 {
+/* z-index 10 高于内容层，低于图表 tooltip(30) / 对话框(100) / toast(200) */
+.page-head {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+
+.page-head h1,
+.collection-title {
   font-size: 22px;
   letter-spacing: -0.01em;
 }

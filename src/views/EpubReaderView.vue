@@ -769,6 +769,8 @@ function onKeydown(e: KeyboardEvent) {
 
 .top-bar {
   top: 0;
+  /* 返回按钮水平落点对齐设置页页头：非 mac 左 40px；mac 由全局 .platform-mac .top-bar 覆盖为 84px */
+  padding: 8px 40px;
 }
 
 .bottom-bar {
