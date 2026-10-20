@@ -119,7 +119,7 @@ import {
   type PageDocument,
   type RenderPageOptions,
 } from '../services/pageRenderer'
-import { PDF_ANIM_BUDGET_MS, TurnPolicy } from '../services/turnPolicy'
+import { BURST_SETTLE_MS, canReplayBurst, PDF_ANIM_BUDGET_MS, TurnPolicy } from '../services/turnPolicy'
 import { cancelTurnCurl, isTurnCurlActive, playTurnCurl } from '../services/turnAnimator'
 import { startTracking, stopTracking, setTrackingPaused } from '../services/readingTracker'
 import {
@@ -165,6 +165,8 @@ const loadError = ref('')
 const canvasEls = ref<(HTMLCanvasElement | null)[]>([])
 /** 渲染序号：翻页时递增，旧的异步渲染循环据此自我中止 */
 let renderSeq = 0
+/** 渲染闸门：pdf.js 渲染任务不可取消，串行化避免连点时每轮输入都提交整组渲染 */
+let renderChain: Promise<void> = Promise.resolve()
 /** 预取序号：翻页后作废旧的邻组预取循环 */
 let prefetchSeq = 0
 const pageAreaEl = ref<HTMLElement | null>(null)
@@ -184,6 +186,11 @@ let turnGen = 0
 /** 书本已打开并完成首帧渲染 */
 let bookReady = false
 const policy = new TurnPolicy()
+// 连翻补播会话：连翻首帧快照 + 起点页，停手后补播唯一一次卷曲（与滑块松手补播同构）
+let burstFromSnap: HTMLCanvasElement | null = null
+let burstFromViewport: boolean | null = null
+let burstStartIndex: number | null = null
+let burstSettleTimer: ReturnType<typeof setTimeout> | null = null
 /** 停手后延迟预取：连翻期间主线程优先服务当前页 */
 const PREFETCH_DELAY_MS = 150
 /** 当前在飞预取画布：只作废 token 无法中止已提交的渲染，必须按画布取消 */
@@ -267,6 +274,7 @@ async function doOpen(id: number) {
   shown = null
   turnGen++ // 作废在飞轮次
   policy.reset()
+  clearBurstSession()
   cancelPrefetch()
   cancelTurnCurl()
   reader.close() // 落盘上一本进度（flushProgress）并销毁旧 PDF 文档
@@ -301,6 +309,7 @@ onBeforeUnmount(() => {
   bookReady = false
   shown = null
   policy.reset()
+  clearBurstSession()
   cancelPrefetch()
   cancelTurnCurl()
   clearCache()
@@ -395,14 +404,28 @@ async function runTurnPass(): Promise<void> {
   })
 
   const viewport = decision.mode === 'animate' ? isVerticallyScrollable() : false
+  // 恢复正常单次翻页：上一段连翻序列已结束，残留会话不得跨段生效
+  if (decision.mode === 'animate') clearBurstSession()
   // 瞬切路径不做任何全屏快照：连翻卡顿主要来自每轮两张全屏合成
   const fromSnap = decision.mode === 'animate' ? snapshotForTurn(viewport) : null
+  // 连翻首帧：瞬切路径仅此一次合成快照（10~30ms），供停手后补播唯一一次卷曲
+  if (decision.mode === 'snap' && decision.burst && burstStartIndex == null) {
+    const burstViewport = isVerticallyScrollable()
+    burstFromSnap = snapshotForTurn(burstViewport)
+    burstFromViewport = burstViewport
+    burstStartIndex = shown?.index ?? reader.currentIndex
+  }
 
   await nextTick()
+  // 渲染闸门：等上一轮真实渲染结束再按世代号判定。连点期间被更新的轮次直接退出，
+  // 不再渲染中间页——pdf.js 任务不可取消，串行后真正执行的只有首、末两页
+  await renderChain
   if (gen !== turnGen) return // 更新请求已接管：不做任何收尾动作
   const painted = await renderCurrentSpread({ fade: !decision.burst })
   if (gen !== turnGen || !painted) return
 
+  // 每轮连翻渲染完成后重置停手计时；到期且无新轮次才补播
+  if (decision.burst) scheduleBurstSettle(gen)
   // 翻页落点：前进置顶、后退置底；模式/方向切换不改变当前滚动位置
   if (isPageTurn) resetPageScroll(indexDelta > 0 ? 'top' : 'bottom')
   // 目标页就绪超预算：迟到的动画与输入脱节，直接显示更跟手
@@ -420,6 +443,73 @@ async function runTurnPass(): Promise<void> {
     fromRight: (indexDelta > 0) === (reader.direction === 'ltr'),
     zIndex: 1, // 低于控制栏（z2）：翻页动画不遮挡顶部/底部工具栏
   })
+}
+
+/** 停手计时：每轮连翻渲染完成后重置；到期且无新轮次才补播（新输入会再次重置） */
+function scheduleBurstSettle(gen: number): void {
+  if (burstSettleTimer) clearTimeout(burstSettleTimer)
+  burstSettleTimer = setTimeout(() => {
+    burstSettleTimer = null
+    if (gen !== turnGen) return // 新轮次接管：由它重新计时，不清会话
+    // 最后一轮渲染未落定 / 已退出拖动态：放弃，避免用旧画面卷曲
+    if (!bookReady || sliderActive || shown?.index !== reader.currentIndex) {
+      clearBurstSession()
+      return
+    }
+    finishBurstCurl()
+  }, BURST_SETTLE_MS)
+}
+
+/** 停手补播：用连翻首帧卷到最终页（不导航；页面已由瞬切轮次渲染到位） */
+function finishBurstCurl(): void {
+  const fromSnap = burstFromSnap
+  const startIndex = burstStartIndex
+  const viewport = burstFromViewport
+  clearBurstSession()
+  if (startIndex == null || viewport == null) return
+  const finalIndex = reader.currentIndex
+  const target = viewport ? pageAreaEl.value : pageContentEl.value
+  if (
+    !rootEl.value ||
+    !target ||
+    !canReplayBurst({
+      tokenValid: true, // 新轮次已由 scheduleBurstSettle 的 gen 校验拦截
+      reducedMotion,
+      hasSnapshot: !!fromSnap,
+      startIndex,
+      finalIndex,
+      startCfi: null, // PDF 以页组索引判重
+      finalCfi: null,
+      queueBusy: false, // PDF 无队列，新轮次由 gen 拦截
+      pendingDelta: 0,
+      curlActive: isTurnCurlActive(),
+      dragging: sliderActive,
+    })
+  ) {
+    return
+  }
+  const toSnap = snapshotForTurn(viewport)
+  if (!toSnap || !fromSnap) return
+  const dir: 'forward' | 'back' = finalIndex > startIndex ? 'forward' : 'back'
+  playTurnCurl({
+    container: rootEl.value,
+    target,
+    from: fromSnap,
+    to: toSnap,
+    fromRight: (dir === 'forward') === (reader.direction === 'ltr'),
+    zIndex: 1, // 低于控制栏 z2，与主翻页 / 滑块补播一致
+  })
+}
+
+/** 清空连翻补播会话（换书 / 窗口尺寸变化 / 滑块接管 / 卸载） */
+function clearBurstSession(): void {
+  if (burstSettleTimer) {
+    clearTimeout(burstSettleTimer)
+    burstSettleTimer = null
+  }
+  burstFromSnap = null
+  burstFromViewport = null
+  burstStartIndex = null
 }
 
 /** 将当前显示画面合成为一张快照。
@@ -566,27 +656,39 @@ async function paintPage(
 async function renderCurrentSpread(options: { fade?: boolean } = {}): Promise<boolean> {
   const doc = reader.doc
   if (!doc) return false
+  // 渲染闸门：排队期间若有更新的请求（seq 已前移），本页直接跳过，绝不提交多余渲染；
+  // 连点 10 次时只有首、末两页真正执行 pdf.js 渲染，中间轮次在排队处自行退出
   const seq = ++renderSeq
-  const fade = options.fade ?? !sliderActive
-  const index = reader.currentIndex
-  const firstPage = reader.spreads[index]?.firstPage ?? 0
-  const navCount = reader.navCount
-  const pages = currentDisplayPages.value.slice()
-  // 双页并行渲染：松手后的等待时间近似减半；作废检查在 paintPage 内部按 seq 拦截
-  await Promise.all(
-    pages.map((page, i) => {
-      const display = canvasEls.value[i]
-      if (!display) return Promise.resolve()
-      return paintPage(doc, page, display, seq, fade).catch((e) => {
-        // 单页损坏不拖垮整组
-        console.error(`[reader] 渲染第 ${page} 页失败`, e)
+  const previous = renderChain
+  const job = (async (): Promise<boolean> => {
+    await previous
+    if (seq !== renderSeq) return false
+    const fade = options.fade ?? !sliderActive
+    const index = reader.currentIndex
+    const firstPage = reader.spreads[index]?.firstPage ?? 0
+    const navCount = reader.navCount
+    const pages = currentDisplayPages.value.slice()
+    // 双页并行渲染：松手后的等待时间近似减半；作废检查在 paintPage 内部按 seq 拦截
+    await Promise.all(
+      pages.map((page, i) => {
+        const display = canvasEls.value[i]
+        if (!display) return Promise.resolve()
+        return paintPage(doc, page, display, seq, fade).catch((e) => {
+          // 单页损坏不拖垮整组
+          console.error(`[reader] 渲染第 ${page} 页失败`, e)
+        })
       })
-    })
+    )
+    if (seq !== renderSeq) return false
+    shown = { index, firstPage, navCount }
+    schedulePrefetch(doc)
+    return true
+  })()
+  renderChain = job.then(
+    () => undefined,
+    () => undefined
   )
-  if (seq !== renderSeq) return false
-  shown = { index, firstPage, navCount }
-  schedulePrefetch(doc)
-  return true
+  return job
 }
 
 /** 取消在飞预取（含已提交到 pdf.js 的渲染）：连翻时主线程只服务当前页 */
@@ -674,6 +776,8 @@ function onHotzoneClick(side: 'left' | 'right') {
 function onSlide(e: Event) {
   const idx = Number((e.target as HTMLInputElement).value)
   if (idx !== reader.currentIndex) {
+    // 拖动接管：连翻补播会话作废，松手只补播滑块自己的那一次
+    clearBurstSession()
     // 记录瞬切前画面、方向与快照模式，供松手时播放唯一一次动画
     slideDir = idx > reader.currentIndex ? 'forward' : 'back'
     const viewport = isVerticallyScrollable()
@@ -901,6 +1005,7 @@ function onResize() {
   if (resizeTimer) clearTimeout(resizeTimer)
   // 防抖：连续拖拽窗口只重渲最后一帧；缓存签名含视口尺寸，旧位图与旧覆盖层自动失效
   resizeTimer = setTimeout(() => {
+    clearBurstSession()
     cancelTurnCurl()
     cancelPrefetch()
     void renderCurrentSpread()

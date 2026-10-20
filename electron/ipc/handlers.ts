@@ -1,10 +1,11 @@
 // IPC 通道集中注册
 // 对应设计文档 §6.2 / §6.3
 
-import { BrowserWindow, dialog, ipcMain, shell, type IpcMainInvokeEvent } from 'electron'
+import { BrowserWindow, dialog, ipcMain, screen, shell, type IpcMainInvokeEvent } from 'electron'
 import { libraryService } from '../services/libraryService'
 import { collectionsRepo } from '../db/repos/collectionsRepo'
 import { getCoverUrl, saveCover, removeCover } from '../services/coverService'
+import { computeShotSize } from '../services/captureShot'
 import * as logger from '../services/logger'
 import { booksRepo } from '../db/repos/booksRepo'
 import { progressRepo } from '../db/repos/progressRepo'
@@ -255,7 +256,18 @@ export function registerIpcHandlers(getWin: () => BrowserWindow | null): void {
       if (image.isEmpty()) {
         throw { code: 'UNKNOWN', message: '截图失败：未取到画面' }
       }
-      return image.toPNG()
+      // 大面积截图（全屏/高 DPI 窗口）先降采样再编码：PNG 编码 + IPC 传输 + 渲染层解码
+      // 是 EPUB 全屏翻页动画超出启动预算的主因；快照在卷曲中会被归一化拉伸回目标尺寸
+      // DPR 取显示器实际缩放因子而非 NativeImage.getScaleFactors()：
+      // capturePage 返回的 NativeImage 不可假定携带与屏幕一致的缩放标记，用它换算会低估物理像素面积
+      const size = image.getSize()
+      const dpr = screen.getDisplayMatching(win.getBounds()).scaleFactor || 1
+      const target = computeShotSize(size.width, size.height, dpr)
+      const shot = target
+        ? image.resize({ width: target.width, height: target.height, quality: 'best' })
+        : image
+      // 极端内存紧张时 resize 可能返回空图：回退原图，不阻断翻页
+      return (shot.isEmpty() ? image : shot).toPNG()
     })
   )
 
