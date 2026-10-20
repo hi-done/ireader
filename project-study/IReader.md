@@ -38,6 +38,8 @@ IReader 是一款纯离线的本地漫画/电子书阅读器（Electron + Vue 3�
 - `src/services/pageCurl.ts`：仿真纸张卷曲翻页动画（覆盖层 canvas 逐帧绘制）
 - `src/services/pageCache.ts`：页面位图 LRU 缓存（12 张，key 含渲染签名）
 - `src/services/coverQueue.ts`：封面生成队列（由 coverQueue.test.ts 覆盖单测）
+- `src/theme.ts`：主题应用：`Settings.theme`（light/dark/system）经 `resolve()` 解析（system 走 prefers-color-scheme），写 `documentElement[data-theme]`，随设置与系统外观实时切换
+- `src/style.css`：全局设计令牌与控件体系：`:root` / `:root[data-theme='dark']` 两套变量（`--brand` 品牌色等）、按钮三级体系、表单控件与页头样式（单点定义，见 Q6）
 - `src/stores/reader.ts`：PDF 阅读状态：文档打开/关闭、页组与当前索引、翻页、进度防抖保存
 - `src/stores/epubReader.ts`：EPUB 阅读状态：rendition 生命周期、next/prev/goTo、单双页与方向切换、进度保存
 - `src/stores/library.ts`：文库状态：书籍列表、刷新（refresh）与过滤（filteredBooks）、合集
@@ -56,3 +58,4 @@ IReader 是一款纯离线的本地漫画/电子书阅读器（Electron + Vue 3�
 - [Q3-20261016 合集页面漫画卡片展示时的间隔设计](./questions/Q3-20261016.md)
 - [Q4-20261016 PDF 翻页动画中与结束后新页面缩放感的成因](./questions/Q4-20261016.md)
 - [Q5-20261017 EPUB 阅读器缩放为何采用百分比而非适宽/适高/原始](./questions/Q5-20261017.md)
+- [Q6-20261020 按钮主题色是什么及由什么控制](./questions/Q6-20261020.md)
