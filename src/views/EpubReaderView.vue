@@ -26,25 +26,16 @@
         <button @click="store.toggleDirection()">
           {{ store.direction === 'ltr' ? '左→右' : '右→左' }}
         </button>
-        <select
+        <SelectMenu
           class="zoom-select"
+          :model-value="zoomValue"
+          :options="zoomOptions"
+          :label="isImageLayout ? '缩放' : '字号'"
           :title="isImageLayout ? '缩放' : '字号'"
-          :value="isImageLayout ? store.zoom : store.fontSize"
           @change="onZoomSelect"
-        >
-          <template v-if="isImageLayout">
-            <option v-for="s in ZOOM_OPTIONS" :key="s" :value="s">{{ s }}%</option>
-            <option v-if="!ZOOM_OPTIONS.includes(store.zoom)" :value="store.zoom">
-              自定义 {{ store.zoom }}%
-            </option>
-          </template>
-          <template v-else>
-            <option v-for="s in FONT_SIZE_OPTIONS" :key="s" :value="s">{{ s }}%</option>
-            <option v-if="!FONT_SIZE_OPTIONS.includes(store.fontSize)" :value="store.fontSize">
-              自定义 {{ store.fontSize }}%
-            </option>
-          </template>
-        </select>
+          @open="pinBars"
+          @close="unpinBars"
+        />
         <button title="全屏（F）" @click="toggleFullscreen">⛶</button>
       </div>
     </header>
@@ -112,6 +103,8 @@ import { useLibraryStore } from '../stores/library'
 import { ipc } from '../services/ipc'
 import { getEpubDiag, pushNavDiag, waitViewsSettled } from '../services/epub'
 import { captureRegionToCanvas } from '../services/capture'
+import type { SelectOption } from '../services/selectMenu'
+import SelectMenu from '../components/ui/SelectMenu.vue'
 import { playPageCurl, type PageCurlHandle } from '../services/pageCurl'
 
 const isDev = import.meta.env?.DEV === true
@@ -125,6 +118,8 @@ const library = useLibraryStore()
 
 const barsVisible = ref(false)
 let hideTimer: ReturnType<typeof setTimeout> | null = null
+/** 顶栏下拉展开期间锁定可见：鼠标在触发器上移动会反复触发 showBarsTemporarily，只清一次计时器不够 */
+let barsPinned = false
 const loadError = ref('')
 const epubAreaEl = ref<HTMLElement | null>(null)
 /** 根元素 ref：pageCurl 的 container（.reader-view 已是 position: relative） */
@@ -492,9 +487,20 @@ const ZOOM_OPTIONS = [50, 75, 100, 125, 150, 200]
 /** 图片型书（pre-paginated）顶栏下拉框为缩放，文字型书为字号 */
 const isImageLayout = computed(() => store.layout === 'pre-paginated')
 
-function onZoomSelect(e: Event) {
-  const value = Number((e.target as HTMLSelectElement).value)
-  if (!Number.isFinite(value)) return
+/** 顶栏下拉当前值：图片型书取缩放，文字型书取字号（百分比整数） */
+const zoomValue = computed(() => (isImageLayout.value ? store.zoom : store.fontSize))
+
+/** 顶栏下拉选项：预置档位 + Ctrl+滚轮调出的档位外自定义值 */
+const zoomOptions = computed<SelectOption<number>[]>(() => {
+  const presets = isImageLayout.value ? ZOOM_OPTIONS : FONT_SIZE_OPTIONS
+  const options: SelectOption<number>[] = presets.map((value) => ({ value, label: `${value}%` }))
+  if (!presets.includes(zoomValue.value)) {
+    options.push({ value: zoomValue.value, label: `自定义 ${zoomValue.value}%` })
+  }
+  return options
+})
+
+function onZoomSelect(value: number) {
   if (store.layout === 'pre-paginated') store.setZoom(value)
   else store.setFontSize(value)
 }
@@ -646,7 +652,22 @@ function onWheel(e: WheelEvent) {
 function showBarsTemporarily(ms = 3000) {
   barsVisible.value = true
   if (hideTimer) clearTimeout(hideTimer)
+  hideTimer = null
+  // 下拉展开期间只保持可见、不启动隐藏计时：鼠标在触发器附近移动会反复调用本函数
+  if (barsPinned) return
   hideTimer = setTimeout(() => (barsVisible.value = false), ms)
+}
+
+/** 下拉展开：锁定顶栏可见 */
+function pinBars() {
+  barsPinned = true
+  showBarsTemporarily()
+}
+
+/** 下拉收起：解除锁定，重新开始自动隐藏 */
+function unpinBars() {
+  barsPinned = false
+  showBarsTemporarily()
 }
 
 function onMouseMove(e: MouseEvent) {
@@ -842,16 +863,22 @@ function onKeydown(e: KeyboardEvent) {
 }
 
 .zoom-select {
-  background: transparent;
-  border: 1px solid rgba(255, 255, 255, 0.4);
-  color: #fff;
-  cursor: pointer;
-  padding: 4px 6px;
-  border-radius: 4px;
-}
-
-.zoom-select option {
-  color: #000;
+  /* 深色顶栏变体：透明底 + 半透明白描边，尺寸对齐相邻 .controls button */
+  --select-height: 26px;
+  --select-min-width: 96px;
+  --select-radius: 4px;
+  --select-padding: 0 6px;
+  --select-bg: transparent;
+  --select-color: #fff;
+  --select-border: rgba(255, 255, 255, 0.4);
+  --select-shadow: none;
+  --select-hover-bg: rgba(255, 255, 255, 0.1);
+  --select-hover-border: rgba(255, 255, 255, 0.65);
+  --select-open-bg: rgba(255, 255, 255, 0.1);
+  --select-focus-border: rgba(255, 255, 255, 0.85);
+  --select-focus-ring: rgba(255, 255, 255, 0.18);
+  --select-chevron: rgba(255, 255, 255, 0.7);
+  --select-chevron-strong: #fff;
 }
 
 .page-area {

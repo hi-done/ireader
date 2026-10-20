@@ -42,11 +42,12 @@
         placeholder="搜索书名…"
       />
       <div class="toolbar-group">
-        <select v-model="library.sortBy" class="sort-select" title="排序方式">
-          <option value="lastOpenedAt">最近阅读</option>
-          <option value="addedAt">添加时间</option>
-          <option value="title">书名</option>
-        </select>
+        <SelectMenu
+          v-model="library.sortBy"
+          class="sort-select"
+          :options="SORT_OPTIONS"
+          label="排序方式"
+        />
         <button class="order-btn" @click="toggleOrder">
           {{ library.sortOrder === 'asc' ? '↑ 升序' : '↓ 降序' }}
         </button>
@@ -215,10 +216,12 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import type { Book } from '../../shared/types'
+import type { Book, SortBy } from '../../shared/types'
 import { useLibraryStore } from '../stores/library'
 import { ipc } from '../services/ipc'
 import { coverQueueState, enqueueCovers, removeFromQueue } from '../services/coverQueue'
+import type { SelectOption } from '../services/selectMenu'
+import SelectMenu from '../components/ui/SelectMenu.vue'
 import BookCard from '../components/library/BookCard.vue'
 import CollectionCard from '../components/library/CollectionCard.vue'
 import CollectionPickerDialog from '../components/library/CollectionPickerDialog.vue'
@@ -230,6 +233,13 @@ import TextPromptDialog from '../components/library/TextPromptDialog.vue'
 const library = useLibraryStore()
 const router = useRouter()
 const route = useRoute()
+
+// 排序下拉选项：value 与 SortBy 对齐，SelectMenu 泛型据此推断
+const SORT_OPTIONS: SelectOption<SortBy>[] = [
+  { value: 'lastOpenedAt', label: '最近阅读' },
+  { value: 'addedAt', label: '添加时间' },
+  { value: 'title', label: '书名' },
+]
 
 // —— 通知条 ——
 const toast = ref('')
@@ -830,7 +840,8 @@ function askDissolve() {
 }
 
 .sort-select {
-  min-width: 108px;
+  /* 触发器的 min-width 由组件读取该变量（默认 160px），工具栏保持紧凑 */
+  --select-min-width: 108px;
 }
 
 .order-btn {

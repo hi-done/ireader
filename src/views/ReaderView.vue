@@ -36,14 +36,16 @@
         <button @click="reader.setDirection(reader.direction === 'ltr' ? 'rtl' : 'ltr')">
           {{ reader.direction === 'ltr' ? '左→右' : '右→左' }}
         </button>
-        <select class="zoom-select" :value="reader.zoomMode" title="缩放" @change="onZoomSelect">
-          <option value="fitWidth">适宽</option>
-          <option value="fitHeight">适高</option>
-          <option value="original">原始</option>
-          <option v-if="reader.zoomMode === 'custom'" value="custom">
-            自定义 {{ Math.round(reader.zoomScale * 100) }}%
-          </option>
-        </select>
+        <SelectMenu
+          class="zoom-select"
+          :model-value="reader.zoomMode"
+          :options="ZOOM_MODE_OPTIONS"
+          label="缩放"
+          title="缩放"
+          @change="onZoomSelect"
+          @open="pinBars"
+          @close="unpinBars"
+        />
         <button title="全屏（F）" @click="toggleFullscreen">⛶</button>
       </div>
     </header>
@@ -109,6 +111,8 @@ import { useLibraryStore } from '../stores/library'
 import { useSettingsStore } from '../stores/settings'
 import { ipc } from '../services/ipc'
 import { getFromCache, putToCache, clearCache } from '../services/pageCache'
+import type { SelectOption } from '../services/selectMenu'
+import SelectMenu from '../components/ui/SelectMenu.vue'
 import { playPageCurl, type PageCurlHandle } from '../services/pageCurl'
 import { renderPageToCanvas, type PageDocument, type RenderPageOptions } from '../services/pageRenderer'
 import { startTracking, stopTracking, setTrackingPaused } from '../services/readingTracker'
@@ -133,8 +137,23 @@ const isEpub = computed(
   () => library.books.find((b) => b.id === routeBookId.value)?.format === 'epub'
 )
 
+// 顶栏缩放下拉：custom 档位仅在生效时出现，标签带上实际百分比
+const ZOOM_MODE_OPTIONS = computed<SelectOption<ZoomMode>[]>(() => {
+  const options: SelectOption<ZoomMode>[] = [
+    { value: 'fitWidth', label: '适宽' },
+    { value: 'fitHeight', label: '适高' },
+    { value: 'original', label: '原始' },
+  ]
+  if (reader.zoomMode === 'custom') {
+    options.push({ value: 'custom', label: `自定义 ${Math.round(reader.zoomScale * 100)}%` })
+  }
+  return options
+})
+
 const barsVisible = ref(false)
 let hideTimer: ReturnType<typeof setTimeout> | null = null
+/** 顶栏下拉展开期间锁定可见：鼠标在触发器上移动会反复触发 showBarsTemporarily，只清一次计时器不够 */
+let barsPinned = false
 const loadError = ref('')
 /** 与 currentDisplayPages 按索引一一对应的 canvas 引用 */
 const canvasEls = ref<(HTMLCanvasElement | null)[]>([])
@@ -714,15 +733,32 @@ function stepZoom(delta: number) {
   if (next !== reader.zoomScale) reader.setZoom('custom', next)
 }
 
-function onZoomSelect(e: Event) {
-  const mode = (e.target as HTMLSelectElement).value as ZoomMode
+function onZoomSelect(mode: ZoomMode) {
   reader.setZoom(mode, 1)
 }
 
 function showBarsTemporarily(ms = 3000) {
   barsVisible.value = true
   if (hideTimer) clearTimeout(hideTimer)
+  hideTimer = null
+  // 下拉展开期间只保持可见、不启动隐藏计时：鼠标在触发器附近移动会反复调用本函数
+  if (barsPinned) return
   hideTimer = setTimeout(() => (barsVisible.value = false), ms)
+}
+
+/** 下拉展开：锁定顶栏 + 结束拖拽平移（弹层在 body 下，菜单内 mouseup 不回阅读区） */
+function pinBars() {
+  barsPinned = true
+  showBarsTemporarily()
+  panning = false
+  panMoved = false
+  document.body.classList.remove('panning')
+}
+
+/** 下拉收起：解除锁定，重新开始自动隐藏 */
+function unpinBars() {
+  barsPinned = false
+  showBarsTemporarily()
 }
 
 function onMouseMove(e: MouseEvent) {
@@ -929,16 +965,22 @@ function onKeydown(e: KeyboardEvent) {
 }
 
 .zoom-select {
-  background: transparent;
-  border: 1px solid rgba(255, 255, 255, 0.4);
-  color: #fff;
-  cursor: pointer;
-  padding: 4px 6px;
-  border-radius: 4px;
-}
-
-.zoom-select option {
-  color: #000;
+  /* 深色顶栏变体：透明底 + 半透明白描边，尺寸对齐相邻 .controls button */
+  --select-height: 26px;
+  --select-min-width: 104px;
+  --select-radius: 4px;
+  --select-padding: 0 6px;
+  --select-bg: transparent;
+  --select-color: #fff;
+  --select-border: rgba(255, 255, 255, 0.4);
+  --select-shadow: none;
+  --select-hover-bg: rgba(255, 255, 255, 0.1);
+  --select-hover-border: rgba(255, 255, 255, 0.65);
+  --select-open-bg: rgba(255, 255, 255, 0.1);
+  --select-focus-border: rgba(255, 255, 255, 0.85);
+  --select-focus-ring: rgba(255, 255, 255, 0.18);
+  --select-chevron: rgba(255, 255, 255, 0.7);
+  --select-chevron-strong: #fff;
 }
 
 .page-area {

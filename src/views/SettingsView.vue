@@ -9,20 +9,24 @@
       <section class="group">
         <h2 class="group-title">阅读偏好</h2>
         <div class="group-card">
-          <label class="row">
+          <div class="row">
             <span class="row-label">默认阅读模式</span>
-            <select v-model="form.defaultMode" @change="save">
-              <option value="single">单页</option>
-              <option value="double">双页</option>
-            </select>
-          </label>
-          <label class="row">
+            <SelectMenu
+              v-model="form.defaultMode"
+              :options="MODE_OPTIONS"
+              label="默认阅读模式"
+              @change="save"
+            />
+          </div>
+          <div class="row">
             <span class="row-label">默认阅读方向</span>
-            <select v-model="form.defaultDirection" @change="save">
-              <option value="ltr">左→右（韩漫）</option>
-              <option value="rtl">右→左（日漫）</option>
-            </select>
-          </label>
+            <SelectMenu
+              v-model="form.defaultDirection"
+              :options="DIRECTION_OPTIONS"
+              label="默认阅读方向"
+              @change="save"
+            />
+          </div>
           <label class="row">
             <span class="row-label">预加载页组数</span>
             <input v-model.number="form.preloadSpreads" type="number" min="0" max="4" @change="save" />
@@ -37,14 +41,15 @@
       <section class="group">
         <h2 class="group-title">外观</h2>
         <div class="group-card">
-          <label class="row">
+          <div class="row">
             <span class="row-label">主题</span>
-            <select v-model="form.theme" @change="save">
-              <option value="system">跟随系统</option>
-              <option value="light">浅色</option>
-              <option value="dark">深色</option>
-            </select>
-          </label>
+            <SelectMenu
+              v-model="form.theme"
+              :options="THEME_OPTIONS"
+              label="主题"
+              @change="save"
+            />
+          </div>
         </div>
       </section>
 
@@ -120,18 +125,36 @@
 
 <script setup lang="ts">
 // 设置页：阅读偏好、外观、数据入口与关于（版本 + 应用内更新）
-// 视觉优化对应设计文档《设置与统计页视觉优化设计方案》§5.1；更新功能对应《软件更新功能设计方案》§8
+// 视觉优化对应设计文档《设置与统计页视觉优化设计方案》§5.1；更新功能对应《软件更新功能设计方案》§8；
+// 下拉菜单对应《设置页与文库下拉菜单苹果风格美化设计方案》§5.2
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useSettingsStore } from '../stores/settings'
 import { IpcError, ipc } from '../services/ipc'
 import { cleanReleaseNotes, formatBytes, formatSpeed } from '../services/updateFormat'
-import type { UpdateProgress } from '../../shared/types'
+import type { SelectOption } from '../services/selectMenu'
+import SelectMenu from '../components/ui/SelectMenu.vue'
+import type { Direction, ReadingMode, UpdateProgress } from '../../shared/types'
 
 const router = useRouter()
 const settingsStore = useSettingsStore()
 
 const form = reactive({ ...settingsStore.settings })
+
+// 下拉选项：value 与 Settings 字段的字面量联合对齐，SelectMenu 泛型据此推断
+const MODE_OPTIONS: SelectOption<ReadingMode>[] = [
+  { value: 'single', label: '单页' },
+  { value: 'double', label: '双页' },
+]
+const DIRECTION_OPTIONS: SelectOption<Direction>[] = [
+  { value: 'ltr', label: '左→右（韩漫）' },
+  { value: 'rtl', label: '右→左（日漫）' },
+]
+const THEME_OPTIONS: SelectOption<'system' | 'light' | 'dark'>[] = [
+  { value: 'system', label: '跟随系统' },
+  { value: 'light', label: '浅色' },
+  { value: 'dark', label: '深色' },
+]
 
 onMounted(async () => {
   if (!settingsStore.loaded) await settingsStore.load()
