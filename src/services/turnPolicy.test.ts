@@ -1,0 +1,110 @@
+import { describe, expect, it } from 'vitest'
+import { TurnPolicy, type TurnPolicyInput } from './turnPolicy'
+
+/** 测试用翻页上下文：默认单页组前进、无动画、无减弱动态 */
+function turn(partial: Partial<TurnPolicyInput> = {}): TurnPolicyInput {
+  return {
+    now: 0,
+    isPageTurn: true,
+    indexDelta: 1,
+    animating: false,
+    reducedMotion: false,
+    dragging: false,
+    ...partial,
+  }
+}
+
+describe('TurnPolicy - 连翻判定', () => {
+  it('无历史首次翻页播放动画', () => {
+    const policy = new TurnPolicy()
+    expect(policy.decide(turn({ now: 1000 }))).toEqual({ mode: 'animate', burst: false })
+  })
+
+  it('间隔 100ms 的第二次翻页瞬切并开启闩锁', () => {
+    const policy = new TurnPolicy()
+    policy.decide(turn({ now: 1000 }))
+    expect(policy.decide(turn({ now: 1100 }))).toEqual({ mode: 'snap', burst: true })
+  })
+
+  it('闩锁期内间隔 300ms 仍瞬切', () => {
+    const policy = new TurnPolicy()
+    policy.decide(turn({ now: 1000 }))
+    policy.decide(turn({ now: 1100 })) // 闩锁至 1600
+    expect(policy.decide(turn({ now: 1400 }))).toEqual({ mode: 'snap', burst: true })
+  })
+
+  it('闩锁结束且间隔足够后恢复动画', () => {
+    const policy = new TurnPolicy()
+    policy.decide(turn({ now: 1000 }))
+    policy.decide(turn({ now: 1100 })) // 闩锁至 1600
+    policy.decide(turn({ now: 1400 }))
+    expect(policy.decide(turn({ now: 2100 }))).toEqual({ mode: 'animate', burst: false })
+  })
+
+  it('卷曲在播时瞬切并开启闩锁', () => {
+    const policy = new TurnPolicy()
+    expect(policy.decide(turn({ now: 1000, animating: true }))).toEqual({
+      mode: 'snap',
+      burst: true,
+    })
+    expect(policy.decide(turn({ now: 1200 }))).toEqual({ mode: 'snap', burst: true })
+  })
+
+  it('一次跨多个页组不做长距离卷曲', () => {
+    const policy = new TurnPolicy()
+    expect(policy.decide(turn({ now: 1000, indexDelta: 2 }))).toEqual({
+      mode: 'snap',
+      burst: true,
+    })
+  })
+
+  it('模式切换瞬切且不污染连翻历史', () => {
+    const policy = new TurnPolicy()
+    expect(policy.decide(turn({ now: 1000, isPageTurn: false, indexDelta: 0 }))).toEqual({
+      mode: 'snap',
+      burst: false,
+    })
+    // 紧随其后的真实翻页距模式切换仅 50ms，仍应播放动画
+    expect(policy.decide(turn({ now: 1050 }))).toEqual({ mode: 'animate', burst: false })
+  })
+
+  it('系统减弱动态时瞬切', () => {
+    const policy = new TurnPolicy()
+    expect(policy.decide(turn({ now: 1000, reducedMotion: true }))).toEqual({
+      mode: 'snap',
+      burst: false,
+    })
+  })
+
+  it('滑块拖动中瞬切', () => {
+    const policy = new TurnPolicy()
+    expect(policy.decide(turn({ now: 1000, dragging: true }))).toEqual({
+      mode: 'snap',
+      burst: false,
+    })
+  })
+
+  it('连发 20 次（间隔 100ms）仅首次播放动画', () => {
+    const policy = new TurnPolicy()
+    const modes = Array.from({ length: 20 }, (_, i) =>
+      policy.decide(turn({ now: 1000 + i * 100 })).mode
+    )
+    expect(modes[0]).toBe('animate')
+    expect(modes.slice(1).every((m) => m === 'snap')).toBe(true)
+  })
+
+  it('reset 后首次翻页重新播放动画', () => {
+    const policy = new TurnPolicy()
+    policy.decide(turn({ now: 1000 }))
+    policy.decide(turn({ now: 1100 }))
+    policy.reset()
+    expect(policy.decide(turn({ now: 1200 }))).toEqual({ mode: 'animate', burst: false })
+  })
+
+  it('自定义阈值生效', () => {
+    const policy = new TurnPolicy({ rapidGapMs: 50, quietMs: 100 })
+    policy.decide(turn({ now: 1000 }))
+    // 间隔 60ms > rapidGapMs 且闩锁未开启，仍播放动画
+    expect(policy.decide(turn({ now: 1060 }))).toEqual({ mode: 'animate', burst: false })
+  })
+})

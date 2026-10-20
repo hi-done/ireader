@@ -23,6 +23,8 @@ export const useReaderStore = defineStore('reader', () => {
   const zoomScale = ref(1)
   const spreads = ref<Spread[]>([])
   const currentIndex = ref(0)
+  /** 翻页导航序号：仅 goTo 递增；模式/方向切换直接改 currentIndex，不递增 */
+  const navCount = ref(0)
 
   function rebuildSpreads(keepPage?: number) {
     spreads.value = buildSpreads(numPages.value, {
@@ -86,6 +88,7 @@ export const useReaderStore = defineStore('reader', () => {
   function goTo(index: number) {
     if (index < 0 || index >= spreads.value.length) return
     currentIndex.value = index
+    navCount.value++
     scheduleSave()
   }
 
@@ -139,6 +142,7 @@ export const useReaderStore = defineStore('reader', () => {
     zoomScale,
     spreads,
     currentIndex,
+    navCount,
     open,
     setMode,
     setDirection,

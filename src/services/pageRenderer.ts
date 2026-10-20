@@ -2,11 +2,12 @@
 // 对应设计文档《CBZ漫画格式支持设计方案》§8.2
 
 import {
+  cancelPdfRender,
   renderPageToCanvas as renderPdfPageToCanvas,
   type PdfDocument,
   type RenderPageOptions,
 } from './pdf'
-import { renderCbzPageToCanvas } from './cbz'
+import { cancelCbzRender, renderCbzPageToCanvas } from './cbz'
 
 /** 阅读器文档句柄：PDF 持有 pdf.js 文档；CBZ 只需 bookId 构造逐页地址 */
 export type PageDocument =
@@ -22,6 +23,12 @@ export function renderPageToCanvas(
   return doc.kind === 'cbz'
     ? renderCbzPageToCanvas(doc.bookId, pageNumber, options)
     : renderPdfPageToCanvas(doc.pdf, pageNumber, options)
+}
+
+/** 取消 doc 在目标 canvas 上进行中的渲染（PDF 可中止、CBZ 只标记跳过绘制） */
+export function cancelPageRender(doc: PageDocument, canvas: HTMLCanvasElement): void {
+  if (doc.kind === 'cbz') cancelCbzRender(canvas)
+  else cancelPdfRender(canvas)
 }
 
 export type { RenderPageOptions }

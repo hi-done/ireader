@@ -122,6 +122,17 @@ export function renderPageToCanvas(
   return doRenderPage(doc, pageNumber, options, entry)
 }
 
+/**
+ * 取消同一 canvas 上进行中的渲染（翻页预取让路用）。
+ * 无进行中任务时为空操作；被取消的渲染以 resolve 结束，不会抛错。
+ */
+export function cancelPdfRender(canvas: HTMLCanvasElement): void {
+  const entry = activeRenders.get(canvas)
+  if (!entry) return
+  entry.cancelled = true
+  entry.task?.cancel()
+}
+
 async function doRenderPage(
   doc: PdfDocument,
   pageNumber: number,

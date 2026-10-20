@@ -68,7 +68,7 @@
       <button
         class="nav-btn"
         :disabled="store.current?.index === 0 || !store.ready"
-        @click="turnPage('back')"
+        @click="requestTurn('back')"
       >
         ‹ 上一页
       </button>
@@ -86,7 +86,7 @@
       <button
         class="nav-btn"
         :disabled="atEnd"
-        @click="turnPage('forward')"
+        @click="requestTurn('forward')"
       >
         下一页 ›
       </button>
@@ -105,7 +105,8 @@ import { getEpubDiag, pushNavDiag, waitViewsSettled } from '../services/epub'
 import { captureRegionToCanvas } from '../services/capture'
 import type { SelectOption } from '../services/selectMenu'
 import SelectMenu from '../components/ui/SelectMenu.vue'
-import { playPageCurl, type PageCurlHandle } from '../services/pageCurl'
+import { EPUB_ANIM_BUDGET_MS, TurnPolicy } from '../services/turnPolicy'
+import { cancelTurnCurl, isTurnCurlActive, playTurnCurl } from '../services/turnAnimator'
 
 const isDev = import.meta.env?.DEV === true
 
@@ -182,6 +183,8 @@ onBeforeUnmount(() => {
   window.removeEventListener('resize', onResize)
   if (diagTimer) clearInterval(diagTimer)
   if (hideTimer) clearTimeout(hideTimer)
+  openSeq++ // 作废进行中的队列消费与动画编排
+  pendingDelta = 0
   unbindRenditionEvents()
   discardTurn()
   store.close()
@@ -204,16 +207,23 @@ function openBook(id: number | string) {
 
 async function doOpen(id: number) {
   loadError.value = ''
-  // 跨书切换：作废进行中的翻页编排并揭除冻结帧，避免旧书画面残留在新书阅读区
-  turnSeq++
+  // 跨书切换：作废进行中的队列消费与翻页编排并揭除冻结帧，避免旧书画面残留在新书阅读区
+  openSeq++
+  pendingDelta = 0
+  navIndex = null
+  forceSnap = false
+  policy.reset()
   discardTurn()
-  turnBusy = false
-  captureHide.value = false
+  sliderDragging = false
+  slideStartIndex = null
+  slideStartCfi = null
+  slideFromPromise = null
   unbindRenditionEvents()
   store.close() // 落盘上一本进度并销毁旧文档
   await nextTick()
   if (!epubAreaEl.value) throw new Error('阅读区未就绪')
   await store.open(id, epubAreaEl.value)
+  navIndex = store.current?.index ?? 0 // 新书权威页索引
   bindRenditionEvents()
 }
 
@@ -308,15 +318,32 @@ async function toggleFullscreen() {
 function onHotzoneClick(side: 'left' | 'right') {
   // 方向感知（同 PDF ReaderView）：LTR 右热区 = 下一页；RTL 左热区 = 下一页
   const forward = store.direction === 'ltr' ? side === 'right' : side === 'left'
-  void turnPage(forward ? 'forward' : 'back')
+  requestTurn(forward ? 'forward' : 'back')
 }
 
 // —— 翻页动画编排：截图冻结帧遮盖 epub.js 重建过程 + 复用 pageCurl 卷曲层 ——
-// turnBusy 防重入；turnSeq 世代号作废旧跨 await 流程（busy/卸载/跨书时递增）
-let turnBusy = false
-let turnSeq = 0
-let curlHandle: PageCurlHandle | null = null
+// 净位移队列：输入只累加 pendingDelta，由单一消费者串行执行，连翻合并为一次到位
+let pendingDelta = 0
+/** 进行中的队列消费（串行，杜绝导航重叠）；重入复用同一 Promise */
+let drainPromise: Promise<void> | null = null
+/** 权威页索引：由队列推演，每次导航后以 relocated 校正 */
+let navIndex: number | null = null
+/** 换书 / 尺寸变化 / 卸载时递增，旧流程在检查点退出 */
+let openSeq = 0
+/** 下一次消费强制瞬切（滑块 / Home / End 等显式跳转） */
+let forceSnap = false
 let freezeEl: HTMLCanvasElement | null = null
+/** 连续翻页判定：连翻瞬切、停手后恢复动画 */
+const policy = new TurnPolicy()
+
+// 外部定位变化（切版式/方向/字号/缩放重分页等）时同步权威页索引；
+// 队列消费期间（drainPromise 非空）由 jumpTo/animatedTurn 自行校正，避免竞态覆盖推演值
+watch(
+  () => store.current?.index,
+  (idx) => {
+    if (idx != null && drainPromise === null) navIndex = idx
+  }
+)
 
 /** 双 rAF：等一帧提交后的合成输出更新（截图前瞬隐控制栏后需等它生效） */
 function doubleRaf(): Promise<void> {
@@ -347,7 +374,7 @@ function waitNextRelocated(timeoutMs = 500): Promise<void> {
   })
 }
 
-/** 冻结帧上屏：旧画面快照绝对定位铺满 .epub-area；不拦截交互（连翻由 busy 逻辑兜底） */
+/** 冻结帧上屏：旧画面快照绝对定位铺满 .epub-area；不拦截交互（连翻由队列兜底） */
 function attachFreeze(area: HTMLElement, from: HTMLCanvasElement) {
   freezeEl = from
   from.style.position = 'absolute'
@@ -363,48 +390,137 @@ function removeFreeze() {
   freezeEl = null
 }
 
-/** 取消进行中的卷曲并揭除冻结帧（作废流程后的统一清理） */
+/** 取消进行中的卷曲、揭除冻结帧并恢复控制栏（作废流程后的统一清理） */
 function discardTurn() {
-  curlHandle?.cancel() // cancel 内部会同步触发 onDone（复位 curlHandle/冻结帧/busy）
-  curlHandle = null
+  cancelTurnCurl() // 底层页面已是动画终点；内部同步兑现 done，唤醒等待中的队列
   removeFreeze()
+  captureHide.value = false
 }
 
-async function turnPage(dir: 'forward' | 'back'): Promise<void> {
+/** 夹取到有效页范围；总页数未知（locations 未就绪）时只保证非负，边界交给 epub.js */
+function clampPageIndex(index: number): number {
+  const total = totalPages.value
+  return total > 0 ? Math.min(Math.max(index, 0), total - 1) : Math.max(index, 0)
+}
+
+/** 翻页入口：只记账，由队列串行消费（连翻净位移合并） */
+function requestTurn(dir: 'forward' | 'back'): void {
   if (!store.ready) return
-  const plain = () => (dir === 'forward' ? store.next() : store.prev())
+  pendingDelta += dir === 'forward' ? 1 : -1
+  // 卷曲在播：立即揭除（底层已是动画终点），让队列尽快消费本次输入
+  if (isTurnCurlActive()) discardTurn()
+  void drainTurns()
+}
 
-  // 快速连翻：作废进行中的编排并清理（覆盖层/冻结帧在屏时再截图会拍到旧像素），本次瞬切
-  if (turnBusy) {
-    pushNavDiag('[curl] busy → 瞬切')
-    turnSeq++
-    discardTurn()
-    turnBusy = false // 旧流程被 seq 作废可能不会自行释放（如卡在 await plain），这里统一复位
-    captureHide.value = false
-    void plain()
-    return
+/** 显式跳转（滑块节流跳页 / Home / End）：并入队列串行执行且强制瞬切；返回「队列已空闲」 */
+function requestJump(index: number): Promise<void> {
+  if (!store.ready) return Promise.resolve()
+  const from = navIndex ?? store.current?.index ?? 0
+  if (index !== from) {
+    forceSnap = true
+    pendingDelta = index - from
   }
-  if (reducedMotion) {
-    pushNavDiag('[curl] reduced-motion → 瞬切')
-    void plain()
-    return
-  }
+  // 跳转即刻生效：揭除在播卷曲（底层已是动画终点），不等 450ms 播完
+  if (isTurnCurlActive()) discardTurn()
+  return drainTurns()
+}
 
+/** 串行消费队列：重入复用同一 Promise，调用方可安全 await「队列空闲」 */
+function drainTurns(): Promise<void> {
+  if (!drainPromise) {
+    const token = openSeq
+    drainPromise = doDrainTurns(token).finally(() => {
+      drainPromise = null
+      if (pendingDelta !== 0) void drainTurns() // 换书/尺寸抖动期间的新输入兜底，绝不丢步
+    })
+  }
+  return drainPromise
+}
+
+async function doDrainTurns(token: number): Promise<void> {
+  while (pendingDelta !== 0 && token === openSeq) {
+    const delta = pendingDelta
+    pendingDelta = 0
+    const snapOnce = forceSnap // 逐次消费：中途的新输入不再继承强制瞬切
+    forceSnap = false
+    const from = navIndex ?? store.current?.index ?? 0
+    const target = clampPageIndex(from + delta)
+    const effective = target - from
+    navIndex = target
+    if (effective === 0) continue // 首/尾页：不导航、不动画
+
+    const decision = snapOnce
+      ? { mode: 'snap' as const, burst: false }
+      : policy.decide({
+          now: performance.now(),
+          isPageTurn: true,
+          indexDelta: effective,
+          animating: isTurnCurlActive(),
+          reducedMotion,
+          dragging: sliderDragging,
+        })
+    if (decision.mode === 'animate' && Math.abs(effective) === 1) {
+      try {
+        await animatedTurn(effective, token)
+      } catch (e) {
+        // 单轮动画/导航异常不拖垮队列：清理覆盖层并以引擎实际落点校正后继续消费
+        discardTurn()
+        if (token === openSeq) navIndex = store.current?.index ?? navIndex
+        console.error('[epub] 动画翻页失败', e)
+      }
+    } else {
+      discardTurn()
+      try {
+        await jumpTo(target, effective, token)
+      } catch (e) {
+        if (token === openSeq) navIndex = store.current?.index ?? navIndex
+        console.error('[epub] 跳页失败', e)
+      }
+    }
+  }
+}
+
+/** 净位移一次到位：图片型书或 locations 就绪时直接 goTo，否则逐页回退；落点以 relocated 为准 */
+async function jumpTo(target: number, delta: number, token: number): Promise<void> {
+  // relocated 监听须先于导航挂上：导航 Promise 早于 relocated 事件 resolve（详见 waitNextRelocated）
+  const relocated = waitNextRelocated()
+  if (store.layout === 'pre-paginated' || (store.locationsReady && totalPages.value > 0)) {
+    await store.goTo(target)
+  } else {
+    for (let i = 0; i < Math.abs(delta); i++) {
+      await (delta > 0 ? store.next() : store.prev())
+    }
+  }
+  await relocated
+  // 以引擎实际落点校正推演值（文字型 location 边界）；换书后旧流程不写新书的索引
+  if (token === openSeq) navIndex = store.current?.index ?? navIndex
+}
+
+/** 单页动画翻页：截图 → 冻结帧 → 导航 → 等 relocated/图片 → 卷曲；队列有新输入即降级瞬切 */
+async function animatedTurn(delta: number, token: number): Promise<void> {
+  const dir: 'forward' | 'back' = delta > 0 ? 'forward' : 'back'
   const area = epubAreaEl.value
   const root = rootEl.value
-  if (!area || !root) {
-    void plain()
+  const target = navIndex ?? 0
+  // 容器缺失 / 减弱动态 / 截图前已有新输入：不截图不占主线程，直接瞬切
+  if (!area || !root || reducedMotion || pendingDelta !== 0) {
+    discardTurn()
+    await jumpTo(target, delta, token)
     return
   }
 
-  turnBusy = true
-  const seq = ++turnSeq
   const t0 = performance.now() // 分段耗时埋点：cap（截图）/ nav（epubjs 重建）/ img（等图）三段
   try {
     // 1. 瞬隐控制栏 → 双 rAF → 捕获干净旧画面；控制栏维持隐藏至卷曲结束（避免覆盖层遮栏闪断）
     captureHide.value = true
     await doubleRaf()
-    if (seq !== turnSeq) return
+    if (token !== openSeq) return
+    if (pendingDelta !== 0) {
+      // 等双 rAF 期间来了新输入：放弃动画，队列接管（此时尚未截图，代价最小）
+      discardTurn()
+      await jumpTo(target, delta, token)
+      return
+    }
     let from: HTMLCanvasElement | null = null
     try {
       const rect = area.getBoundingClientRect()
@@ -419,23 +535,35 @@ async function turnPage(dir: 'forward' | 'back'): Promise<void> {
       pushNavDiag('[curl] capture fail → 无动画')
     }
     const tCap = performance.now()
-    if (seq !== turnSeq) return
+    if (token !== openSeq) return
+    if (pendingDelta !== 0) {
+      // 截图期间来了新输入：此时再上屏冻结帧会拍到旧像素，交给队列瞬切
+      discardTurn()
+      await jumpTo(target, delta, token)
+      return
+    }
 
     // 2. 冻结帧先上屏（实时画面仍是旧页，视觉无缝），再驱动 epub.js 重建视图
     const prevCfi = store.current?.cfi
     if (from) attachFreeze(area, from)
-    // relocated 监听须先于导航挂上：epubjs 导航 Promise 早于 relocated 事件 resolve，
-    // await plain() 返回时 store.current 还是旧值（详见 waitNextRelocated 注释）
     const relocated = waitNextRelocated()
-    await plain()
-    // 图片等待与 relocated 通报并行（都只依赖 plain 完成）；限时 250ms：
+    if (store.layout === 'pre-paginated' || (store.locationsReady && totalPages.value > 0)) {
+      await store.goTo(target)
+    } else {
+      await (delta > 0 ? store.next() : store.prev())
+    }
+    // 图片等待与 relocated 通报并行（都只依赖导航完成）；限时 250ms：
     // 卷曲透明区从自由边渐进揭示（缓动下前段揭示面小），图片解码与动画前段重叠，
     // 超时即开动画不阻塞——仅慢盘/超大图可能动画中段短暂微露白
     const rendition = store.getRendition()
-    const settled = rendition ? waitViewsSettled(rendition, 250) : Promise.resolve()
+    // 视图已被销毁时 getContents 可能抛错：吞掉，等图失败不阻断翻页
+    const settled = rendition
+      ? waitViewsSettled(rendition, 250).catch(() => undefined)
+      : Promise.resolve()
     await relocated
     const tNav = performance.now()
-    if (seq !== turnSeq) return // 已被连翻流程接替（冻结帧已由 discardTurn 揭除）
+    if (token !== openSeq) return // 已被换书/尺寸变化作废（冻结帧已由 discardTurn 揭除）
+    navIndex = store.current?.index ?? navIndex
 
     // 3. 未发生位移（首/尾页）：不播动画，仅揭除冻结帧。
     //    用 CFI 而非 index 判定：文字型书的 index 是 location 块索引，一屏翻页可能仍在同一块内
@@ -447,35 +575,37 @@ async function turnPage(dir: 'forward' | 'back'): Promise<void> {
 
     // 4. 等新视图稳定（多数情况在等 relocated 期间已就绪）后播卷曲；省略 to：透出实时新视图
     await settled
-    if (seq !== turnSeq) return
+    if (token !== openSeq) return
+    // 播前再查：期间的新输入 / 正在拖动 / 超预算 → 不播迟到动画（页面已上屏，直接揭除）
+    if (pendingDelta !== 0 || sliderDragging || performance.now() - t0 > EPUB_ANIM_BUDGET_MS) {
+      pushNavDiag(
+        `[curl] skip play pending=${pendingDelta} drag=${sliderDragging} ` +
+          `d=${Math.round(performance.now() - t0)}ms`
+      )
+      discardTurn()
+      return
+    }
     const fromRight = (dir === 'forward') === (store.direction === 'ltr') // 同 PDF
     const tPlay = performance.now()
     pushNavDiag(
       `[curl] play ${dir} fromRight=${fromRight} d=${Math.round(tPlay - t0)}ms ` +
         `cap=${Math.round(tCap - t0)} nav=${Math.round(tNav - tCap)} img=${Math.round(tPlay - tNav)}`
     )
-    curlHandle = playPageCurl({
+    const handle = playTurnCurl({
       container: root,
       target: area,
       from,
       fromRight,
-      onDone: () => {
-        curlHandle = null
-        removeFreeze()
-        turnBusy = false
-        captureHide.value = false
-      },
+      onDone: removeFreeze,
     })
-    // 卷曲首帧已画出旧页全幅 → 双 rAF 后揭除冻结帧（无缝）
+    // 卷曲首帧已画出旧页全幅 → 双 rAF 后揭除冻结帧（无缝）；仅移除本次自己贴上的那份
     void doubleRaf().then(() => {
-      if (seq === turnSeq) removeFreeze()
+      if (freezeEl === from) removeFreeze()
     })
+    await handle.done // 等到卷曲结束或被新输入揭除，队列才继续消费下一轮
   } finally {
-    // 提前返回路径（未进入卷曲）释放 busy 并恢复控制栏；卷曲路径由 onDone 释放
-    if (seq === turnSeq && !curlHandle) {
-      turnBusy = false
-      captureHide.value = false
-    }
+    // 卷曲结束/被取消/提前返回：恢复控制栏（卷曲期间保持隐藏避免遮栏闪断）
+    if (token === openSeq) captureHide.value = false
   }
 }
 
@@ -541,8 +671,13 @@ function onSlideInput(e: Event) {
   sliderIndex.value = idx
   // 拖动会话首帧：记录起始索引并异步捕获起始画面（含控制栏；thumb 冻结约 450ms 可接受）
   if (sessionStart) {
-    slideStartIndex = store.current?.index ?? idx
+    slideStartIndex = navIndex ?? store.current?.index ?? idx
     slideStartCfi = store.current?.cfi ?? null
+    // 拖动即作废在飞动画，并以当前页为基准重建队列推演（避免继承连翻期间的净位移）
+    discardTurn()
+    pendingDelta = 0
+    forceSnap = false
+    navIndex = store.current?.index ?? slideStartIndex
     const area = epubAreaEl.value
     if (area && !reducedMotion) {
       const rect = area.getBoundingClientRect()
@@ -554,9 +689,11 @@ function onSlideInput(e: Event) {
       }).catch(() => null)
     }
   }
-  // 拖动过程密集触发 input：节流跳页，避免整页重渲染任务在队列积压而“没反应”
+  // 拖动过程密集触发 input：节流跳页，队列串行执行且强制瞬切，避免整页重渲染任务积压而“没反应”
   if (slideTimer) clearTimeout(slideTimer)
-  slideTimer = setTimeout(() => store.goTo(idx), 200)
+  slideTimer = setTimeout(() => {
+    void requestJump(idx)
+  }, 200)
 }
 
 function onSlideChange(e: Event) {
@@ -572,7 +709,7 @@ function onSlideChange(e: Event) {
   }, 400)
 }
 
-/** 滑块松手收尾：等最终跳页与视图稳定后，从拖动开始画面补播一次卷曲（对齐 PDF finishSlide） */
+/** 滑块松手收尾：等队列把最终页上屏后，用拖动起始快照补播唯一一次卷曲（不再自行导航） */
 async function finishSlideCurl(finalIndex: number): Promise<void> {
   const startIndex = slideStartIndex
   const startCfi = slideStartCfi
@@ -580,57 +717,27 @@ async function finishSlideCurl(finalIndex: number): Promise<void> {
   slideStartIndex = null
   slideStartCfi = null
   slideFromPromise = null
-  const nav = store.goTo(finalIndex)
-  if (reducedMotion || turnBusy || startIndex == null || !fromPromise) return
+  const token = openSeq
+  await requestJump(finalIndex) // 串行：与在飞导航合并，最终页上屏后才补播
+  if (reducedMotion || !store.ready || startIndex == null || !fromPromise || token !== openSeq) return
+  // 期间又来了新的翻页/跳页或已有卷曲在播：不再补播，避免用旧快照盖住新页面
+  if (drainPromise !== null || pendingDelta !== 0 || navIndex !== finalIndex || isTurnCurlActive()) {
+    return
+  }
+  const from = await fromPromise
   const area = epubAreaEl.value
   const root = rootEl.value
-  if (!area || !root) return
-
-  // 补播沿用 busy/seq：期间热区/键盘的翻页请求走瞬切降级并作废本流程
-  turnBusy = true
-  const seq = ++turnSeq
-  const t0 = performance.now()
-  // 同 turnPage：goTo 的 Promise 早于 relocated 事件 resolve，位移判定前先等 relocated
-  const relocated = waitNextRelocated()
-  try {
-    const from = await fromPromise
-    if (seq !== turnSeq) return
-    if (from) attachFreeze(area, from)
-    await nav
-    // 图片等待与 relocated 通报并行；限时 250ms，超时不阻塞开动画（同 turnPage）
-    const rendition = store.getRendition()
-    const settled = rendition ? waitViewsSettled(rendition, 250) : Promise.resolve()
-    await relocated
-    if (seq !== turnSeq) return
-    // 未发生位移：不播动画，仅揭除冻结帧（CFI 判定，同 turnPage）
-    if (!from || !store.current || store.current.cfi === startCfi) {
-      pushNavDiag('[curl] slide no-move skip')
-      removeFreeze()
-      return
-    }
-    // 等新视图稳定（多数情况在等 relocated 期间已就绪）
-    await settled
-    if (seq !== turnSeq) return
-    const dir: 'forward' | 'back' = finalIndex > startIndex ? 'forward' : 'back'
-    const fromRight = (dir === 'forward') === (store.direction === 'ltr') // 同 PDF
-    pushNavDiag(`[curl] slide play d=${Math.round(performance.now() - t0)}ms`)
-    curlHandle = playPageCurl({
-      container: root,
-      target: area,
-      from,
-      fromRight,
-      onDone: () => {
-        curlHandle = null
-        removeFreeze()
-        turnBusy = false
-      },
-    })
-    void doubleRaf().then(() => {
-      if (seq === turnSeq) removeFreeze()
-    })
-  } finally {
-    if (seq === turnSeq && !curlHandle) turnBusy = false
+  if (!from || !area || !root || !store.current) return
+  // 未发生位移：不播（保留现有 CFI 判重）
+  if (store.current.cfi === startCfi) {
+    pushNavDiag('[curl] slide no-move skip')
+    return
   }
+  const dir: 'forward' | 'back' = finalIndex > startIndex ? 'forward' : 'back'
+  const fromRight = (dir === 'forward') === (store.direction === 'ltr') // 同 PDF
+  pushNavDiag(`[curl] slide play ${dir}`)
+  // 补播卷曲归单例管理：期间的新翻页会揭除它并让队列继续消费
+  await playTurnCurl({ container: root, target: area, from, fromRight }).done
 }
 
 let wheelLock = false
@@ -646,7 +753,7 @@ function onWheel(e: WheelEvent) {
   if (wheelLock || Math.abs(e.deltaY) < 20) return
   wheelLock = true
   setTimeout(() => (wheelLock = false), 250)
-  void turnPage(e.deltaY > 0 ? 'forward' : 'back')
+  requestTurn(e.deltaY > 0 ? 'forward' : 'back')
 }
 
 function showBarsTemporarily(ms = 3000) {
@@ -682,13 +789,12 @@ function onResize() {
   if (resizeTimer) clearTimeout(resizeTimer)
   // 防抖后按新视口重排分页
   resizeTimer = setTimeout(() => {
-    // 尺寸变化令进行中的翻页编排失效（截图/冻结帧按旧尺寸），取消动画并揭除冻结帧
-    if (turnBusy) {
-      turnSeq++
-      discardTurn()
-      turnBusy = false
-      captureHide.value = false
-    }
+    // 尺寸变化令进行中的翻页编排失效（截图/冻结帧按旧尺寸）：作废队列消费并揭除冻结帧
+    openSeq++
+    pendingDelta = 0
+    forceSnap = false
+    discardTurn()
+    navIndex = store.current?.index ?? null
     if (epubAreaEl.value) {
       const rect = epubAreaEl.value.getBoundingClientRect()
       store.resize(rect.width, rect.height)
@@ -708,31 +814,31 @@ function onKeydown(e: KeyboardEvent) {
   }
   switch (e.key) {
     case 'ArrowRight':
-      void turnPage('forward')
+      requestTurn('forward')
       break
     case 'ArrowLeft':
-      void turnPage('back')
+      requestTurn('back')
       break
     case 'ArrowDown':
-      void turnPage('forward')
+      requestTurn('forward')
       break
     case 'ArrowUp':
-      void turnPage('back')
+      requestTurn('back')
       break
     case ' ':
-      void turnPage(e.shiftKey ? 'back' : 'forward')
+      requestTurn(e.shiftKey ? 'back' : 'forward')
       break
     case 'PageDown':
-      void turnPage('forward')
+      requestTurn('forward')
       break
     case 'PageUp':
-      void turnPage('back')
+      requestTurn('back')
       break
     case 'Home':
-      store.goTo(0)
+      void requestJump(0)
       break
     case 'End':
-      store.goTo(Math.max(0, totalPages.value - 1))
+      void requestJump(Math.max(0, totalPages.value - 1))
       break
     case '=':
     case '+':

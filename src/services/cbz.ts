@@ -52,6 +52,12 @@ export function renderCbzPageToCanvas(
   return doRenderCbzPage(bookId, pageNumber, options, entry)
 }
 
+/** 取消同一 canvas 上进行中的绘制（预取让路用）；图片解码不可中止，醒来后只跳过绘制 */
+export function cancelCbzRender(canvas: HTMLCanvasElement): void {
+  const entry = activeDraws.get(canvas)
+  if (entry) entry.cancelled = true
+}
+
 async function doRenderCbzPage(
   bookId: number,
   pageNumber: number,

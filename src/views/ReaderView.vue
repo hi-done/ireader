@@ -113,8 +113,14 @@ import { ipc } from '../services/ipc'
 import { getFromCache, putToCache, clearCache } from '../services/pageCache'
 import type { SelectOption } from '../services/selectMenu'
 import SelectMenu from '../components/ui/SelectMenu.vue'
-import { playPageCurl, type PageCurlHandle } from '../services/pageCurl'
-import { renderPageToCanvas, type PageDocument, type RenderPageOptions } from '../services/pageRenderer'
+import {
+  cancelPageRender,
+  renderPageToCanvas,
+  type PageDocument,
+  type RenderPageOptions,
+} from '../services/pageRenderer'
+import { PDF_ANIM_BUDGET_MS, TurnPolicy } from '../services/turnPolicy'
+import { cancelTurnCurl, isTurnCurlActive, playTurnCurl } from '../services/turnAnimator'
 import { startTracking, stopTracking, setTrackingPaused } from '../services/readingTracker'
 import {
   normalizeWheelDelta,
@@ -170,11 +176,20 @@ let wheelScrollState: WheelScrollState = {
   lastDir: 0,
 }
 
-// —— 翻页动画（仿真纸张卷曲，pageCurl.ts）——
-/** 'forward'/'back' 为阅读流方向；null 表示本次重渲染不是翻页（模式/方向切换等），不播动画 */
-let turnDir: 'forward' | 'back' | null = null
-let lastAnimFirstPage = 0
-let curlHandle: PageCurlHandle | null = null
+// —— 翻页动画（仿真纸张卷曲，turnAnimator 单例）——
+/** 屏幕当前已绘制页组（动画基准）；null = 尚未绘制 */
+let shown: { index: number; firstPage: number; navCount: number } | null = null
+/** 请求世代号：新请求到达即递增，旧轮次在检查点退出 */
+let turnGen = 0
+/** 书本已打开并完成首帧渲染 */
+let bookReady = false
+const policy = new TurnPolicy()
+/** 停手后延迟预取：连翻期间主线程优先服务当前页 */
+const PREFETCH_DELAY_MS = 150
+/** 当前在飞预取画布：只作废 token 无法中止已提交的渲染，必须按画布取消 */
+let prefetchCanvas: HTMLCanvasElement | null = null
+/** 停手后延迟启动预取的计时器 */
+let prefetchTimer: ReturnType<typeof setTimeout> | null = null
 const rootEl = ref<HTMLElement | null>(null)
 const pageContentEl = ref<HTMLElement | null>(null)
 
@@ -217,9 +232,14 @@ onMounted(async () => {
 // 防止 v-else 分支销毁后旧 PDF 文档仍占用资源/进度未落盘
 watch(isEpub, (now) => {
   if (now) {
+    bookReady = false
+    shown = null
+    turnGen++
+    policy.reset()
+    cancelPrefetch()
+    cancelTurnCurl()
     reader.close()
     clearCache()
-    curlHandle?.cancel()
     loadError.value = ''
   }
 })
@@ -243,9 +263,14 @@ watch(loadError, (e) => setTrackingPaused(Boolean(e)))
 async function doOpen(id: number) {
   if (isEpub.value) return // EPUB 不经过 PDF 打开链
   loadError.value = ''
+  bookReady = false
+  shown = null
+  turnGen++ // 作废在飞轮次
+  policy.reset()
+  cancelPrefetch()
+  cancelTurnCurl()
   reader.close() // 落盘上一本进度（flushProgress）并销毁旧 PDF 文档
   clearCache() // 位图缓存属于上一本书
-  curlHandle?.cancel()
   await reader.open(id)
 }
 
@@ -257,9 +282,11 @@ function openBook(id: number) {
   openChain = openChain.then(() => doOpen(id))
   void openChain
     .then(async () => {
+      if (isEpub.value) return // 打开期间已切到 EPUB：本文档链不再接管画面
       await nextTick()
       await renderCurrentSpread()
       resetPageScroll('top') // 新书/切换书籍从页首开始，避免复用组件残留旧滚动位置
+      bookReady = true
       showBarsTemporarily()
     })
     .catch((e) => {
@@ -271,7 +298,11 @@ onBeforeUnmount(() => {
   window.removeEventListener('keydown', onKeydown)
   window.removeEventListener('resize', onResize)
   if (hideTimer) clearTimeout(hideTimer)
-  curlHandle?.cancel()
+  bookReady = false
+  shown = null
+  policy.reset()
+  cancelPrefetch()
+  cancelTurnCurl()
   clearCache()
   stopTracking() // 结算并停止阅读计时
   reader.close()
@@ -312,68 +343,84 @@ function switchBook(delta: 1 | -1) {
 }
 
 // 监听显示页序列而非 currentIndex：模式/方向切换可能保持索引不变，但 displayOrder 已变；
-// 仅当页组确实前进/后退（firstPage 变化）时播翻页动画
-watch(currentDisplayPages, async () => {
-  const firstPage = reader.spreads[reader.currentIndex]?.firstPage ?? 0
-  const isPageTurn =
-    firstPage !== lastAnimFirstPage &&
-    lastAnimFirstPage !== 0 &&
-    !sliderActive && // 拖动期间无条件瞬切，不播动画
-    Date.now() > sliderUntil // 兜底窗口（change 丢失时恢复）
-  turnDir = isPageTurn ? (firstPage > lastAnimFirstPage ? 'forward' : 'back') : null
-  lastAnimFirstPage = firstPage
+// 是否翻页以 store 的 navCount 判定（仅 goTo 递增），避免把页组重排误判为翻页
+watch(currentDisplayPages, () => void runTurnPass())
 
-  // 拖动中零渲染：整组缓存命中才贴图（邻页微调仍实时跟随），否则保持当前画面。
-  // 跨多页拖动时每轮目标组全缓存 miss，若照常渲染会堆积大量无法取消的
-  // pdf.js 渲染任务（每次都用新建离屏 canvas，重入取消永不触发），导致长时间卡顿
+/** 拖动中零渲染：整组缓存命中才贴图（邻页微调仍实时跟随），否则保持当前画面。
+ *  跨多页拖动时每轮目标组全缓存 miss，若照常渲染会堆积大量无法取消的
+ *  pdf.js 渲染任务（每次都用新建离屏 canvas，重入取消永不触发），导致长时间卡顿 */
+function renderSliderFrame(): void {
+  const bookId = reader.bookId
+  if (bookId == null) return
+  const sig = cacheSignature()
+  const snaps = currentDisplayPages.value.map((p) => getFromCache(bookId, p, sig))
+  if (!snaps.every(Boolean)) return
+  snaps.forEach((s, i) => {
+    const d = canvasEls.value[i]
+    if (d && s) blit(s, d, false)
+  })
+}
+
+/** 单轮翻页：世代号保证「最新请求胜出」，旧轮次在每个 await 检查点静默退出 */
+async function runTurnPass(): Promise<void> {
+  const gen = ++turnGen
+  if (!bookReady) return // 开书首帧由 openBook 负责
+  const startedAt = performance.now()
+  const index = reader.currentIndex
+  if (!reader.spreads[index]) return
+
+  cancelPrefetch() // 连翻时不给预取抢主线程
+
+  // 滑块兜底：change 丢失时 1s 后自动退出拖动态（现有 sliderUntil 只在旧判定里读过，实际未生效）
+  if (sliderActive && Date.now() > sliderUntil) sliderActive = false
   if (sliderActive) {
-    const bookId = reader.bookId
-    if (bookId != null) {
-      const sig = cacheSignature()
-      const snaps = currentDisplayPages.value.map((p) => getFromCache(bookId, p, sig))
-      if (snaps.every(Boolean)) {
-        snaps.forEach((s, i) => {
-          const d = canvasEls.value[i]
-          if (d && s) blit(s, d)
-        })
-      }
-    }
+    renderSliderFrame()
     return
   }
 
-  // 翻页：先截取旧画面快照，供卷曲动画使用。
-  // 旧页纵向溢出时用可视区快照：完整内容快照从页首绘制，用户在页底时动画会错位
-  let fromSnap: HTMLCanvasElement | null = null
-  let viewportSnap = false
-  if (isPageTurn && !reducedMotion) {
-    curlHandle?.cancel() // 连续翻页时立即揭除上一次动画
-    viewportSnap = isVerticallyScrollable()
-    fromSnap = snapshotForTurn(viewportSnap)
-  }
+  // 任何轮次（翻页、模式/方向切换、缩放重排）都先揭除旧覆盖层：
+  // 旧卷曲的几何与像素已过期，绝不允许跨轮次残留
+  const wasAnimating = isTurnCurlActive() // 揭除前取样，供策略判定「连翻」
+  cancelTurnCurl()
+
+  const isPageTurn = !!shown && reader.navCount !== shown.navCount
+  const indexDelta = shown ? index - shown.index : 0
+  const decision = policy.decide({
+    now: startedAt,
+    isPageTurn,
+    indexDelta,
+    animating: wasAnimating,
+    reducedMotion,
+    dragging: false,
+  })
+
+  const viewport = decision.mode === 'animate' ? isVerticallyScrollable() : false
+  // 瞬切路径不做任何全屏快照：连翻卡顿主要来自每轮两张全屏合成
+  const fromSnap = decision.mode === 'animate' ? snapshotForTurn(viewport) : null
 
   await nextTick()
-  await renderCurrentSpread()
+  if (gen !== turnGen) return // 更新请求已接管：不做任何收尾动作
+  const painted = await renderCurrentSpread({ fade: !decision.burst })
+  if (gen !== turnGen || !painted) return
 
   // 翻页落点：前进置顶、后退置底；模式/方向切换不改变当前滚动位置
-  if (isPageTurn) resetPageScroll(turnDir === 'back' ? 'bottom' : 'top')
+  if (isPageTurn) resetPageScroll(indexDelta > 0 ? 'top' : 'bottom')
+  // 目标页就绪超预算：迟到的动画与输入脱节，直接显示更跟手
+  if (!fromSnap || performance.now() - startedAt > PDF_ANIM_BUDGET_MS) return
 
-  // 新组渲染完成后，用旧/新快照播放纸张翻页动画（覆盖层，结束后底下已是新页）
-  if (fromSnap && rootEl.value) {
-    const toSnap = snapshotForTurn(viewportSnap)
-    const target = viewportSnap ? pageAreaEl.value : pageContentEl.value
-    if (toSnap && target) {
-      const fromRight = (turnDir === 'forward') === (reader.direction === 'ltr')
-      curlHandle = playPageCurl({
-        container: rootEl.value,
-        target,
-        from: fromSnap,
-        to: toSnap,
-        fromRight,
-        zIndex: 1, // 低于控制栏（z2）：翻页动画不遮挡顶部/底部工具栏
-      })
-    }
-  }
-})
+  const target = viewport ? pageAreaEl.value : pageContentEl.value
+  const toSnap = target ? snapshotForTurn(viewport) : null
+  if (!toSnap || !target || !rootEl.value) return
+
+  playTurnCurl({
+    container: rootEl.value,
+    target,
+    from: fromSnap,
+    to: toSnap,
+    fromRight: (indexDelta > 0) === (reader.direction === 'ltr'),
+    zIndex: 1, // 低于控制栏（z2）：翻页动画不遮挡顶部/底部工具栏
+  })
+}
 
 /** 将当前显示画面合成为一张快照。
  *  viewport=true：以 .page-area 可视区为裁剪框，只保留当前可见切片（含滚动偏移），黑底填充；
@@ -426,8 +473,11 @@ function snapshotForTurn(viewport: boolean): HTMLCanvasElement | null {
 watch(
   () => [reader.zoomMode, reader.zoomScale] as const,
   async () => {
+    // 几何已变：旧覆盖层按旧尺寸合成必须立即揭除，预取作废
+    cancelTurnCurl()
+    cancelPrefetch()
     await nextTick()
-    renderCurrentSpread()
+    await renderCurrentSpread()
   }
 )
 
@@ -472,14 +522,14 @@ function cacheSignature(): string {
 }
 
 /** 将已渲染好的位图同步贴到显示 canvas；贴图时重播短淡入，柔和化慢路径渲染的突现感。
- *  滑块拖动期间跳过淡入：高频页组切换 × 每次淡入 = 内容反复透明渐显的闪烁 */
-function blit(src: HTMLCanvasElement, dst: HTMLCanvasElement): void {
+ *  fade=false（瞬切/拖动）只写位图：跳过强制 reflow 与淡入，避免连翻时反复闪烁 */
+function blit(src: HTMLCanvasElement, dst: HTMLCanvasElement, fade = true): void {
   dst.width = src.width
   dst.height = src.height
   dst.style.width = src.style.width
   dst.style.height = src.style.height
   dst.getContext('2d')?.drawImage(src, 0, 0)
-  if (sliderActive) return
+  if (!fade) return
   dst.style.animation = 'none'
   void dst.offsetWidth // 强制 reflow 以重启动画
   dst.style.animation = ''
@@ -492,47 +542,81 @@ async function paintPage(
   doc: PageDocument,
   page: number,
   display: HTMLCanvasElement,
-  seq: number
+  seq: number,
+  fade: boolean
 ): Promise<void> {
   const bookId = reader.bookId
   if (bookId == null) return
   const sig = cacheSignature()
   const cached = getFromCache(bookId, page, sig)
   if (cached) {
-    if (seq === renderSeq) blit(cached, display)
+    if (seq === renderSeq) blit(cached, display, fade)
     return
   }
   const offscreen = document.createElement('canvas')
   await renderPageToCanvas(doc, page, { canvas: offscreen, ...zoomRenderOptions() })
   putToCache(bookId, page, sig, offscreen)
-  if (seq === renderSeq) blit(offscreen, display)
+  if (seq === renderSeq) blit(offscreen, display, fade)
 }
 
-async function renderCurrentSpread() {
+/**
+ * 渲染当前页组；返回 false 表示已被更新的渲染循环作废（此时不更新动画基准 shown）。
+ * fade=false 用于瞬切路径：跳过位图淡入，画面即时切换。
+ */
+async function renderCurrentSpread(options: { fade?: boolean } = {}): Promise<boolean> {
   const doc = reader.doc
-  if (!doc) return
+  if (!doc) return false
   const seq = ++renderSeq
+  const fade = options.fade ?? !sliderActive
+  const index = reader.currentIndex
+  const firstPage = reader.spreads[index]?.firstPage ?? 0
+  const navCount = reader.navCount
+  const pages = currentDisplayPages.value.slice()
   // 双页并行渲染：松手后的等待时间近似减半；作废检查在 paintPage 内部按 seq 拦截
   await Promise.all(
-    currentDisplayPages.value.map((page, i) => {
+    pages.map((page, i) => {
       const display = canvasEls.value[i]
       if (!display) return Promise.resolve()
-      return paintPage(doc, page, display, seq).catch((e) => {
+      return paintPage(doc, page, display, seq, fade).catch((e) => {
         // 单页损坏不拖垮整组
         console.error(`[reader] 渲染第 ${page} 页失败`, e)
       })
     })
   )
-  if (seq === renderSeq) void prefetchNeighbors(doc)
+  if (seq !== renderSeq) return false
+  shown = { index, firstPage, navCount }
+  schedulePrefetch(doc)
+  return true
 }
 
-/** 当前组渲染完成后，异步预取后续页组与前一页组（数量取设置 preloadSpreads，0–4） */
-async function prefetchNeighbors(doc: PageDocument): Promise<void> {
+/** 取消在飞预取（含已提交到 pdf.js 的渲染）：连翻时主线程只服务当前页 */
+function cancelPrefetch(): void {
+  if (prefetchTimer) {
+    clearTimeout(prefetchTimer)
+    prefetchTimer = null
+  }
+  prefetchSeq++
+  if (prefetchCanvas && reader.doc) cancelPageRender(reader.doc, prefetchCanvas)
+  prefetchCanvas = null
+}
+
+/** 停手 150ms 后启动单并发预取；任一翻页 / 缩放 / 开书都会取消重排 */
+function schedulePrefetch(doc: PageDocument): void {
+  cancelPrefetch()
+  if (settingsStore.settings.preloadSpreads <= 0 || reader.bookId == null) return
+  const token = prefetchSeq
+  prefetchTimer = setTimeout(() => {
+    prefetchTimer = null
+    void prefetchNeighbors(doc, token)
+  }, PREFETCH_DELAY_MS)
+}
+
+/** 预取后续页组与前一页组（数量取设置 preloadSpreads，0–4）；token 失效即整体放弃 */
+async function prefetchNeighbors(doc: PageDocument, token: number): Promise<void> {
   const count = settingsStore.settings.preloadSpreads
   if (count <= 0 || reader.bookId == null) return
   const bookId = reader.bookId
-  const token = ++prefetchSeq
-
+  const sig = cacheSignature() // 一次性捕获：循环中视口/缩放变化则整轮结果不写入
   const order: number[] = []
   for (let s = reader.currentIndex + 1; s <= reader.currentIndex + count; s++) {
     order.push(...(reader.spreads[s]?.pages ?? []))
@@ -542,15 +626,18 @@ async function prefetchNeighbors(doc: PageDocument): Promise<void> {
 
   for (const page of order) {
     if (token !== prefetchSeq) return // 已翻页，作废旧预取
-    if (getFromCache(bookId, page, cacheSignature())) continue
+    if (getFromCache(bookId, page, sig)) continue
     const offscreen = document.createElement('canvas')
+    prefetchCanvas = offscreen
     try {
       await renderPageToCanvas(doc, page, { canvas: offscreen, ...zoomRenderOptions() })
     } catch {
       continue // 预取失败静默，翻到时再按未命中处理
+    } finally {
+      if (prefetchCanvas === offscreen) prefetchCanvas = null
     }
     if (token !== prefetchSeq) return
-    putToCache(bookId, page, cacheSignature(), offscreen)
+    putToCache(bookId, page, sig, offscreen)
   }
 }
 
@@ -595,6 +682,7 @@ function onSlide(e: Event) {
       slideFromSnap = snap
       slideFromViewport = viewport
     }
+    cancelTurnCurl() // 拖动即揭除在播卷曲，避免覆盖层遮住跟随画面
     sliderActive = true
     sliderUntil = Date.now() + 1000 // 兜底：change 丢失时 1s 后恢复动画
     reader.goTo(idx)
@@ -619,7 +707,7 @@ async function finishSlide(
   viewport: boolean
 ) {
   const idx = reader.currentIndex
-  await renderCurrentSpread() // 序号机制会作废拖动中遗留的旧渲染循环
+  await renderCurrentSpread({ fade: false }) // 序号机制会作废拖动中遗留的旧渲染循环
   if (reader.currentIndex !== idx) return // 期间用户又拖动，交给新一轮流程
   sliderActive = false
   sliderUntil = 0
@@ -629,9 +717,8 @@ async function finishSlide(
   if (!target) return
   const toSnap = snapshotForTurn(viewport)
   if (!toSnap) return
-  curlHandle?.cancel()
   const fromRight = (dir === 'forward') === (reader.direction === 'ltr')
-  curlHandle = playPageCurl({
+  playTurnCurl({
     container: rootEl.value,
     target,
     from: fromSnap,
@@ -812,8 +899,12 @@ function onMouseUp() {
 let resizeTimer: ReturnType<typeof setTimeout> | null = null
 function onResize() {
   if (resizeTimer) clearTimeout(resizeTimer)
-  // 防抖：连续拖拽窗口只重渲最后一帧；缓存签名含视口尺寸，旧位图自动失效
-  resizeTimer = setTimeout(() => void renderCurrentSpread(), 200)
+  // 防抖：连续拖拽窗口只重渲最后一帧；缓存签名含视口尺寸，旧位图与旧覆盖层自动失效
+  resizeTimer = setTimeout(() => {
+    cancelTurnCurl()
+    cancelPrefetch()
+    void renderCurrentSpread()
+  }, 200)
 }
 
 function onKeydown(e: KeyboardEvent) {
