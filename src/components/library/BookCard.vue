@@ -19,7 +19,7 @@
           <path d="M7 3.5h6.5L18 8v12a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1v-16a1 1 0 0 1 1-1z" />
           <path d="M13.5 3.5V8H18" />
         </svg>
-        <span>无封面</span>
+        <span>{{ t('common.noCover') }}</span>
       </div>
 
       <!-- 跟随指针的封面高光：纯装饰层，不参与命中 -->
@@ -41,7 +41,7 @@
           <path d="M12 10.2v3.9" />
           <path d="M12 17.3h.01" />
         </svg>
-        文件缺失
+        {{ t('library.book.missingBadge') }}
       </span>
 
       <!-- 阅读进度圆环：悬浮在封面右上角，hover 时让位给操作按钮；
@@ -51,7 +51,7 @@
         v-if="progressPercent !== null"
         class="progress-ring"
         role="img"
-        :aria-label="`阅读进度 ${progressPercent}%`"
+        :aria-label="t('library.book.progress', { percent: progressPercent })"
       >
         <svg viewBox="0 0 36 36">
           <circle class="ring-bg" cx="18" cy="18" r="15.5" />
@@ -125,11 +125,11 @@
       </button>
       <button
         class="action-btn remove-btn"
-        :aria-label="removeLabel"
+        :aria-label="removeText"
         @click.stop="$emit('remove', book.id)"
-        @pointerenter="openActionTip($event, removeLabel, 'right')"
+        @pointerenter="openActionTip($event, removeText, 'right')"
         @pointerleave="closeTip"
-        @focus="openActionTip($event, removeLabel, 'right')"
+        @focus="openActionTip($event, removeText, 'right')"
         @blur="closeTip"
       >
         <svg
@@ -166,19 +166,19 @@
 // 悬停提示框（按钮 / 书名）见 specs/图书卡片提示框苹果风美化设计方案-20261021.md §5.5
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import type { Book } from '../../../shared/types'
+import { t } from '../../i18n'
 import { attachCardTilt, type CardTiltHandle } from '../../services/cardTilt'
 import type { TipAlign, TipPlacement } from '../../services/cardTip'
 import CardTip from '../ui/CardTip.vue'
 
-const props = withDefaults(
-  defineProps<{ book: Book; /** 合集视图内 × 的语义变为移出合集 */ removeLabel?: string }>(),
-  { removeLabel: '从文库移除' }
-)
+const props = defineProps<{ book: Book; /** 合集视图内 × 的语义变为移出合集 */ removeLabel?: string }>()
 defineEmits<{ open: [bookId: number]; remove: [bookId: number]; rename: [bookId: number]; move: [bookId: number] }>()
 
-/** 操作按钮文案：aria-label（读屏）与提示框文本共用，避免两处漂移 */
-const MOVE_LABEL = '移入合集'
-const RENAME_LABEL = '重命名'
+/** 操作按钮文案：aria-label（读屏）与提示框文本共用，避免两处漂移；均在模板渲染时读取语言 */
+const MOVE_LABEL = computed(() => t('library.book.move'))
+const RENAME_LABEL = computed(() => t('library.book.rename'))
+/** × 按钮语义：合集视图传入「移出合集」，主页缺省为「从文库移除」 */
+const removeText = computed(() => props.removeLabel ?? t('library.book.remove'))
 
 const progressPercent = computed(() => {
   const { progress, totalPages } = props.book
@@ -231,7 +231,7 @@ function openTitleTip(event: PointerEvent) {
   const el = event.currentTarget as HTMLElement
   openTip(el, {
     text: props.book.title,
-    meta: progressPercent.value !== null ? `阅读进度 ${progressPercent.value}%` : '',
+    meta: progressPercent.value !== null ? t('library.book.progress', { percent: progressPercent.value }) : '',
     placement: 'above',
     align: 'center',
     maxWidth: el.offsetWidth,

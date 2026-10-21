@@ -1,8 +1,8 @@
 <template>
   <div class="stats-view">
     <header class="page-head">
-      <button class="ghost" @click="router.back()">← 返回</button>
-      <h1>阅读统计</h1>
+      <button class="ghost" @click="router.back()">{{ t('common.back') }}</button>
+      <h1>{{ t('stats.title') }}</h1>
     </header>
 
     <!-- 加载骨架屏 -->
@@ -17,7 +17,7 @@
     <!-- 错误态 -->
     <div v-else-if="loadError" class="content error-wrap">
       <p class="error-text">{{ loadError }}</p>
-      <button class="primary" @click="load">重试</button>
+      <button class="primary" @click="load">{{ t('common.retry') }}</button>
     </div>
 
     <!-- 空态 -->
@@ -26,22 +26,22 @@
     <!-- 正常内容 -->
     <div v-else-if="summary" class="content">
       <div class="cards">
-        <StatCard title="总阅读时长" :value="summary.totalMs" sub-text="全部书籍累计" accent />
-        <StatCard title="今日阅读" :value="summary.todayMs" :sub-text="yesterdayText" />
+        <StatCard :title="t('stats.totalDuration')" :value="summary.totalMs" :sub-text="t('stats.totalSub')" accent />
+        <StatCard :title="t('stats.today')" :value="summary.todayMs" :sub-text="yesterdayText" />
         <StatCard
-          title="连续阅读"
+          :title="t('stats.streak')"
           :value="streak"
           format="days"
-          :sub-text="`累计 ${readDays} 天有阅读`"
+          :sub-text="tp('stats.streakSub', readDays)"
         />
       </div>
 
       <section class="panel">
         <div class="panel-head">
-          <h2>最近阅读</h2>
+          <h2>{{ t('stats.recent') }}</h2>
           <div class="seg">
-            <button :class="{ on: range === 7 }" @click="range = 7">近 7 天</button>
-            <button :class="{ on: range === 30 }" @click="range = 30">近 30 天</button>
+            <button :class="{ on: range === 7 }" @click="range = 7">{{ t('stats.range7') }}</button>
+            <button :class="{ on: range === 30 }" @click="range = 30">{{ t('stats.range30') }}</button>
           </div>
         </div>
         <!-- key=range：切换窗口时重挂载，重播生长动画 -->
@@ -50,12 +50,16 @@
 
       <section class="panel">
         <div class="panel-head">
-          <h2>书籍排行</h2>
+          <h2>{{ t('stats.ranking') }}</h2>
           <div class="panel-head-right">
             <span class="panel-count">{{ rankCountText }}</span>
             <div class="seg">
-              <button :class="{ on: rankMode === 'today' }" @click="rankMode = 'today'">今日</button>
-              <button :class="{ on: rankMode === 'total' }" @click="rankMode = 'total'">总计</button>
+              <button :class="{ on: rankMode === 'today' }" @click="rankMode = 'today'">
+                {{ t('stats.modeToday') }}
+              </button>
+              <button :class="{ on: rankMode === 'total' }" @click="rankMode = 'total'">
+                {{ t('stats.modeTotal') }}
+              </button>
             </div>
           </div>
         </div>
@@ -74,9 +78,12 @@
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { formatDayKey, type ReadingStatsSummary } from '../../shared/types'
-import { IpcError, ipc } from '../services/ipc'
-import { calcStreak, formatDuration, pickRankingBooks } from '../services/readingStats'
+import { ipc } from '../services/ipc'
+import { calcStreak, pickRankingBooks } from '../services/readingStats'
 import type { RankingMode } from '../services/readingStats'
+import { t, tp } from '../i18n'
+import { formatDuration } from '../i18n/format'
+import { localizeError } from '../i18n/errors'
 import StatCard from '../components/stats/StatCard.vue'
 import DailyBarChart from '../components/stats/DailyBarChart.vue'
 import BookRankingList from '../components/stats/BookRankingList.vue'
@@ -99,8 +106,8 @@ const rankBooks = computed(() =>
 /** 排行面板计数文案：随口径联动 */
 const rankCountText = computed(() =>
   rankMode.value === 'today'
-    ? `今日 ${rankBooks.value.length} 本`
-    : `共 ${summary.value?.books.length ?? 0} 本`
+    ? tp('stats.rankTodayCount', rankBooks.value.length)
+    : tp('stats.rankTotalCount', summary.value?.books.length ?? 0)
 )
 
 const isEmpty = computed(() => summary.value !== null && summary.value.totalMs === 0)
@@ -109,7 +116,7 @@ const visibleDays = computed(() => summary.value?.days.slice(-range.value) ?? []
 const yesterdayText = computed(() => {
   const days = summary.value?.days
   const y = days && days.length >= 2 ? days[days.length - 2].durationMs : 0
-  return y > 0 ? `昨天 ${formatDuration(y)}` : '昨天无记录'
+  return y > 0 ? t('stats.yesterdayDuration', { duration: formatDuration(y) }) : t('stats.yesterdayNone')
 })
 
 const streak = computed(() =>
@@ -124,7 +131,7 @@ async function load() {
   try {
     summary.value = await ipc.stats.summary(30)
   } catch (e) {
-    loadError.value = e instanceof IpcError ? `加载失败：${e.message}` : '加载失败，请重试'
+    loadError.value = t('stats.loadFailed', { message: localizeError(e) })
   } finally {
     loading.value = false
   }

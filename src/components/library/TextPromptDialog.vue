@@ -12,8 +12,10 @@
           autofocus
         />
         <div class="dialog-actions">
-          <button class="btn" type="button" @click="$emit('cancel')">取消</button>
-          <button class="btn primary" type="submit" :disabled="!value.trim()">确定</button>
+          <button class="btn" type="button" @click="$emit('cancel')">{{ t('common.cancel') }}</button>
+          <button class="btn primary" type="submit" :disabled="!value.trim()">
+            {{ t('common.confirm') }}
+          </button>
         </div>
       </form>
     </div>
@@ -22,6 +24,7 @@
 
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
+import { t } from '../../i18n'
 
 const props = defineProps<{
   title: string

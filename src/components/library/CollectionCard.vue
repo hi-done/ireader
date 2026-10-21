@@ -22,14 +22,14 @@
             <path d="M7 3.5h6.5L18 8v12a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1v-16a1 1 0 0 1 1-1z" />
             <path d="M13.5 3.5V8H18" />
           </svg>
-          <span>{{ bookCount ? '暂无封面' : '空合集' }}</span>
+          <span>{{ bookCount ? t('library.collection.noCover') : t('library.collection.emptyCover') }}</span>
         </div>
 
         <!-- 跟随指针的封面高光：纯装饰层，不参与命中 -->
         <div class="cover-glare" aria-hidden="true" />
 
         <!-- 数量徽章替代原 meta 行，保证与书卡片同构等高 -->
-        <span class="count-badge cover-badge">{{ bookCount }} 本</span>
+        <span class="count-badge cover-badge">{{ tp('common.bookCount', bookCount) }}</span>
       </div>
     </div>
     <!-- 书名行：hover 触发上方提示框（合集无阅读进度）；
@@ -56,16 +56,18 @@
 // 书名提示走 CardTip 浮层，见 specs/图书卡片提示框苹果风美化设计方案-20261021.md §5.6
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import type { Book, Collection } from '../../../shared/types'
+import { appLocale, t, tp } from '../../i18n'
+import { compareTitles } from '../../services/libraryList'
 import { attachCardTilt, type CardTiltHandle } from '../../services/cardTilt'
 import CardTip from '../ui/CardTip.vue'
 
 const props = defineProps<{ collection: Collection; books: Book[] }>()
 defineEmits<{ open: [collectionId: number] }>()
 
-// 封面 = 集内漫画按名称升序排序的第一本；合集本身无阅读进度
+// 封面 = 集内漫画按当前界面语言的名称升序排序的第一本；合集本身无阅读进度
 const coverBook = computed(
   () =>
-    [...props.books].sort((a, b) => a.title.localeCompare(b.title, 'zh-Hans-CN'))[0] ?? null
+    [...props.books].sort((a, b) => compareTitles(a.title, b.title, appLocale.value))[0] ?? null
 )
 const bookCount = computed(() => props.books.length)
 

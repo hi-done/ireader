@@ -15,7 +15,7 @@
       </div>
       <div class="rank-info">
         <div class="rank-title" :title="b.title">{{ b.title }}</div>
-        <div class="rank-sub">最近阅读：{{ formatRelativeDay(b.lastReadAt) }}</div>
+        <div class="rank-sub">{{ t('stats.ranking.recent', { date: formatRelativeDay(b.lastReadAt) }) }}</div>
         <div class="rank-track">
           <div class="rank-fill" :style="fillStyle(b, i)"></div>
         </div>
@@ -24,7 +24,7 @@
     </div>
 
     <button v-if="books.length > TOP_N" class="ghost rank-expand" @click="expanded = !expanded">
-      {{ expanded ? '收起' : `展开全部（共 ${books.length} 本）` }}
+      {{ expanded ? t('stats.ranking.collapse') : tp('stats.ranking.expandAll', books.length) }}
     </button>
   </div>
 </template>
@@ -35,7 +35,9 @@
 // 今日 / 总计口径切换对应设计文档《书籍排行今日与总计切换设计方案》§7.2
 import { computed, onMounted, ref } from 'vue'
 import type { BookReadingStat } from '../../../shared/types'
-import { formatDuration, formatRelativeDay, type RankingMode } from '../../services/readingStats'
+import { t, tp } from '../../i18n'
+import { formatDuration, formatRelativeDay } from '../../i18n/format'
+import type { RankingMode } from '../../services/readingStats'
 
 const TOP_N = 10
 
@@ -55,7 +57,7 @@ const visibleBooks = computed(() => (expanded.value ? props.books : props.books.
 
 /** 空列表文案：今日口径为局部空态；总计口径正常被整页空态拦截，仅防御 */
 const emptyText = computed(() =>
-  (props.mode ?? 'total') === 'today' ? '今天还没有阅读记录，打开一本书开始吧' : '暂无阅读记录'
+  (props.mode ?? 'total') === 'today' ? t('stats.ranking.emptyToday') : t('stats.ranking.empty')
 )
 
 /** 当前口径的时长取值 */

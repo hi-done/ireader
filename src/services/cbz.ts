@@ -1,6 +1,7 @@
 // CBZ 单页渲染：经 ireader://cbz/{id}/{page} 拉取单张图片并按 pdf.js 同规格绘制到 canvas
 // 对应设计文档《CBZ漫画格式支持设计方案》§4.3 / §8.1
 
+import { t } from '../i18n'
 import type { RenderPageOptions } from './pdf'
 
 interface CbzPageSize {
@@ -65,7 +66,9 @@ async function doRenderCbzPage(
   entry: ActiveDraw
 ): Promise<void> {
   const res = await fetch(`ireader://cbz/${bookId}/${pageNumber}`)
-  if (!res.ok) throw new Error(`加载漫画第 ${pageNumber} 页失败（HTTP ${res.status}）`)
+  if (!res.ok) {
+    throw new Error(t('reader.cbzPageFailed', { page: pageNumber, status: res.status }))
+  }
   // 显式携带 Content-Type：Chromium 的 createImageBitmap 按 MIME 选择解码器
   const blob = new Blob([await res.arrayBuffer()], {
     type: res.headers.get('Content-Type') ?? '',

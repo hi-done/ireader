@@ -9,7 +9,8 @@
 <script setup lang="ts">
 // 统计概览卡：主数值挂载后从 0 缓动滚入
 import { computed, onUnmounted, ref, watch } from 'vue'
-import { formatDuration } from '../../services/readingStats'
+import { tp } from '../../i18n'
+import { formatDuration } from '../../i18n/format'
 
 const props = defineProps<{
   title: string
@@ -31,7 +32,7 @@ const reducedMotion =
 
 const displayText = computed(() =>
   props.format === 'days'
-    ? `${Math.round(displayValue.value)} 天`
+    ? tp('stats.dayCount', Math.round(displayValue.value))
     : formatDuration(displayValue.value)
 )
 
@@ -45,9 +46,9 @@ function animateTo(target: number) {
   const from = displayValue.value
   const start = performance.now()
   const step = (now: number) => {
-    const t = Math.min(1, (now - start) / 600)
-    displayValue.value = from + (target - from) * (1 - Math.pow(1 - t, 3))
-    if (t < 1) raf = requestAnimationFrame(step)
+    const progress = Math.min(1, (now - start) / 600)
+    displayValue.value = from + (target - from) * (1 - Math.pow(1 - progress, 3))
+    if (progress < 1) raf = requestAnimationFrame(step)
   }
   raf = requestAnimationFrame(step)
 }

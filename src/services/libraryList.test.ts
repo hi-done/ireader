@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import type { Book, Collection } from '../../shared/types'
-import { filterCollectionsByKeyword, sortBooks, sortCollections } from './libraryList'
+import {
+  compareTitles,
+  filterCollectionsByKeyword,
+  sortBooks,
+  sortCollections,
+  titleCollator,
+} from './libraryList'
 
 /** 构造测试用图书：只关心排序相关字段，其余取最小默认值 */
 function book(overrides: Partial<Book> & Pick<Book, 'id' | 'title'>): Book {
@@ -175,6 +181,62 @@ describe('排序不修改入参且同值稳定', () => {
     const sorted = sortCollections(collections, [], 'addedAt', 'desc')
     expect(sorted).not.toBe(collections)
     expect(ids(collections)).toEqual([1, 2])
+  })
+})
+
+describe('compareTitles / titleCollator', () => {
+  it('按传入语言比较书名', () => {
+    expect(compareTitles('a', 'b', 'en')).toBeLessThan(0)
+    expect(compareTitles('b', 'a', 'en')).toBeGreaterThan(0)
+    expect(compareTitles('Same', 'Same', 'ja')).toBe(0)
+  })
+
+  it('同语言复用排序器实例，不同语言各自独立', () => {
+    expect(titleCollator('en')).toBe(titleCollator('en'))
+    expect(titleCollator('en')).not.toBe(titleCollator('ja'))
+  })
+})
+
+describe('sortBooks / sortCollections - 按界面语言排序', () => {
+  it('英文界面按字母序排列且升降序对称', () => {
+    const books = [
+      book({ id: 1, title: 'charlie' }),
+      book({ id: 2, title: 'alpha' }),
+      book({ id: 3, title: 'bravo' }),
+    ]
+    expect(titles(sortBooks(books, 'title', 'asc', 'en'))).toEqual(['alpha', 'bravo', 'charlie'])
+    expect(titles(sortBooks(books, 'title', 'desc', 'en'))).toEqual([
+      'charlie',
+      'bravo',
+      'alpha',
+    ])
+  })
+
+  it('日文界面按假名序排列', () => {
+    const books = [
+      book({ id: 1, title: 'さくら' }),
+      book({ id: 2, title: 'あさ' }),
+      book({ id: 3, title: 'かき' }),
+    ]
+    expect(titles(sortBooks(books, 'title', 'asc', 'ja'))).toEqual(['あさ', 'かき', 'さくら'])
+  })
+
+  it('合集排序同样使用传入语言', () => {
+    const collections = [
+      collection(1, 'beta', 1),
+      collection(2, 'alpha', 2),
+      collection(3, 'Gamma', 3),
+    ]
+    expect(titles(sortCollections(collections, [], 'title', 'asc', 'en'))).toEqual([
+      'alpha',
+      'beta',
+      'Gamma',
+    ])
+  })
+
+  it('不传语言时保持中文默认行为（与既有用例一致）', () => {
+    const books = [book({ id: 1, title: '贝塔' }), book({ id: 2, title: '阿尔法' })]
+    expect(titles(sortBooks(books, 'title', 'asc'))).toEqual(['阿尔法', '贝塔'])
   })
 })
 

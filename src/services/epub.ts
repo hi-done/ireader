@@ -8,6 +8,8 @@ import ePub, {
   Rendition as EpubRendition,
 } from 'epubjs'
 
+import { t } from '../i18n'
+
 export type { EpubBook, EpubContents, EpubLocation, EpubRendition }
 
 // —— DEV 诊断缓冲（阅读界面 debug 面板读取；仅开发模式收集）——
@@ -80,7 +82,7 @@ export interface EpubPosition {
  */
 export async function loadEpubBook(url: string): Promise<EpubBook> {
   const res = await fetch(url)
-  if (!res.ok) throw new Error(`加载 EPUB 失败（HTTP ${res.status}）`)
+  if (!res.ok) throw new Error(t('reader.epubLoadFailed', { status: res.status }))
   const data = await res.arrayBuffer()
   const book = ePub(data)
   await book.ready

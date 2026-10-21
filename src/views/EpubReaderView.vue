@@ -1,42 +1,42 @@
 <template>
   <div ref="rootEl" class="reader-view" @mousemove="onMouseMove">
     <header class="top-bar" :class="{ visible: barsVisible }">
-      <button class="icon-btn" @click="goBack">← 返回</button>
+      <button class="icon-btn" @click="goBack">{{ t('common.back') }}</button>
       <span class="title">{{ bookTitle }}</span>
       <button
         class="book-nav"
         :disabled="prevBookId == null"
-        title="上一本"
+        :title="t('reader.prevBookTitle')"
         @click="switchBook(-1)"
       >
-        ‹ 上一本
+        {{ t('reader.prevBook') }}
       </button>
       <button
         class="book-nav"
         :disabled="nextBookId == null"
-        title="下一本"
+        :title="t('reader.nextBookTitle')"
         @click="switchBook(1)"
       >
-        下一本 ›
+        {{ t('reader.nextBook') }}
       </button>
       <div class="controls">
         <button @click="store.toggleSpread()">
-          {{ store.spread === 'always' ? '双页' : '单页' }}
+          {{ store.spread === 'always' ? t('reader.double') : t('reader.single') }}
         </button>
         <button @click="store.toggleDirection()">
-          {{ store.direction === 'ltr' ? '左→右' : '右→左' }}
+          {{ store.direction === 'ltr' ? t('reader.dirLtr') : t('reader.dirRtl') }}
         </button>
         <SelectMenu
           class="zoom-select"
           :model-value="zoomValue"
           :options="zoomOptions"
-          :label="isImageLayout ? '缩放' : '字号'"
-          :title="isImageLayout ? '缩放' : '字号'"
+          :label="isImageLayout ? t('reader.zoom') : t('reader.fontSize')"
+          :title="isImageLayout ? t('reader.zoom') : t('reader.fontSize')"
           @change="onZoomSelect"
           @open="pinBars"
           @close="unpinBars"
         />
-        <button title="全屏（F）" @click="toggleFullscreen">⛶</button>
+        <button :title="t('reader.fullscreen')" @click="toggleFullscreen">⛶</button>
       </div>
     </header>
 
@@ -44,10 +44,10 @@
       <!-- epub.js 渲染容器：始终在布局中（打开时必须有确定宽高），加载态用提示层覆盖 -->
       <div ref="epubAreaEl" class="epub-area" />
       <div v-if="loadError" class="state-tip">
-        <p>无法打开本书：{{ loadError }}</p>
-        <button @click="goBack">返回文库</button>
+        <p>{{ t('reader.loadFailed', { message: loadError }) }}</p>
+        <button @click="goBack">{{ t('reader.backToLibrary') }}</button>
       </div>
-      <div v-else-if="!store.ready" class="state-tip">加载中…</div>
+      <div v-else-if="!store.ready" class="state-tip">{{ t('reader.loading') }}</div>
       <div
         v-if="store.ready && !loadError"
         class="hotzone hotzone-left"
@@ -70,7 +70,7 @@
         :disabled="store.current?.index === 0 || !store.ready"
         @click="requestTurn('back')"
       >
-        ‹ 上一页
+        {{ t('reader.prevPage') }}
       </button>
       <input
         class="page-slider"
@@ -79,7 +79,7 @@
         :max="Math.max(0, totalPages - 1)"
         :value="sliderIndex"
         :disabled="!store.locationsReady"
-        title="拖动跳页"
+        :title="t('reader.dragToSeek')"
         @input="onSlideInput"
         @change="onSlideChange"
       />
@@ -88,7 +88,7 @@
         :disabled="atEnd"
         @click="requestTurn('forward')"
       >
-        下一页 ›
+        {{ t('reader.nextPage') }}
       </button>
     </footer>
   </div>
@@ -107,6 +107,9 @@ import type { SelectOption } from '../services/selectMenu'
 import SelectMenu from '../components/ui/SelectMenu.vue'
 import { BURST_SETTLE_MS, canReplayBurst, pickEpubAnimBudget, TurnPolicy } from '../services/turnPolicy'
 import { cancelTurnCurl, isTurnCurlActive, playTurnCurl } from '../services/turnAnimator'
+import { appLocale, t } from '../i18n'
+import { localizeError } from '../i18n/errors'
+import { compareTitles } from '../services/libraryList'
 
 const isDev = import.meta.env?.DEV === true
 
@@ -200,7 +203,7 @@ function openBook(id: number | string) {
   void openChain
     .then(() => showBarsTemporarily())
     .catch((e) => {
-      loadError.value = e instanceof Error ? e.message : String(e)
+      loadError.value = localizeError(e)
     })
 }
 
@@ -221,7 +224,7 @@ async function doOpen(id: number) {
   unbindRenditionEvents()
   store.close() // 落盘上一本进度并销毁旧文档
   await nextTick()
-  if (!epubAreaEl.value) throw new Error('阅读区未就绪')
+  if (!epubAreaEl.value) throw new Error(t('reader.viewNotReady'))
   await store.open(id, epubAreaEl.value)
   navIndex = store.current?.index ?? 0 // 新书权威页索引
   bindRenditionEvents()
@@ -274,7 +277,7 @@ const contextBooks = computed(() => {
   if (typeof cid === 'string' && cid) {
     return [...library.books]
       .filter((b) => b.collectionId === Number(cid))
-      .sort((a, b) => a.title.localeCompare(b.title, 'zh-Hans-CN'))
+      .sort((a, b) => compareTitles(a.title, b.title, appLocale.value))
   }
   return library.filteredBooks.filter((b) => !b.collectionId)
 })
@@ -743,7 +746,7 @@ const zoomOptions = computed<SelectOption<number>[]>(() => {
   const presets = isImageLayout.value ? ZOOM_OPTIONS : FONT_SIZE_OPTIONS
   const options: SelectOption<number>[] = presets.map((value) => ({ value, label: `${value}%` }))
   if (!presets.includes(zoomValue.value)) {
-    options.push({ value: zoomValue.value, label: `自定义 ${zoomValue.value}%` })
+    options.push({ value: zoomValue.value, label: t('reader.customZoom', { percent: zoomValue.value }) })
   }
   return options
 })

@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import { ipc } from '../services/ipc'
+import { t } from '../i18n'
 import {
   applyCoverSinglePage,
   detectImageBasedBook,
@@ -91,7 +92,7 @@ export const useEpubReaderStore = defineStore('epubReader', () => {
     // 归一为 number：路由参数/组件 prop 可能是字符串，若不归一，
     // 视图里 b.id === store.bookId 严格比较失败，上一本/下一本按钮会常灰
     const numId = Number(id)
-    if (!Number.isFinite(numId)) throw new Error(`无效的书籍 ID: ${id}`)
+    if (!Number.isFinite(numId)) throw new Error(t('reader.invalidBookId', { id: String(id) }))
     const result = await ipc.reader.open(numId)
     bookId.value = numId
     fontSize.value = settingsStore.settings.epubFontSize

@@ -1,15 +1,19 @@
 <template>
   <div class="dialog-mask" @click.self="$emit('cancel')">
     <div class="dialog" role="dialog" aria-modal="true">
-      <h2 class="dialog-title">文件缺失</h2>
+      <h2 class="dialog-title">{{ t('library.missingDialog.title') }}</h2>
       <p class="dialog-body">
-        《{{ book.title }}》的原文件已不在原位置：
+        {{ t('library.missingDialog.body', { title: book.title }) }}
         <code class="path">{{ book.filePath }}</code>
       </p>
       <div class="dialog-actions">
-        <button class="btn" @click="$emit('cancel')">取消</button>
-        <button class="btn danger" @click="$emit('remove')">从文库移除</button>
-        <button class="btn primary" @click="$emit('relink')">重新定位…</button>
+        <button class="btn" @click="$emit('cancel')">{{ t('common.cancel') }}</button>
+        <button class="btn danger" @click="$emit('remove')">
+          {{ t('library.missingDialog.remove') }}
+        </button>
+        <button class="btn primary" @click="$emit('relink')">
+          {{ t('library.missingDialog.relink') }}
+        </button>
       </div>
     </div>
   </div>
@@ -17,6 +21,7 @@
 
 <script setup lang="ts">
 import type { Book } from '../../../shared/types'
+import { t } from '../../i18n'
 
 defineProps<{ book: Book }>()
 defineEmits<{ cancel: []; relink: []; remove: [] }>()

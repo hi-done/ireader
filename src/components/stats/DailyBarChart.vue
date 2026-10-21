@@ -104,7 +104,9 @@
 // 对应设计文档《阅读时间统计功能设计方案》§9.4
 import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
 import { formatDayKey, type DailyReadingStat } from '../../../shared/types'
-import { formatDuration, formatDurationCompact, niceMax } from '../../services/readingStats'
+import { niceMax } from '../../services/readingStats'
+import { t } from '../../i18n'
+import { formatDuration, formatDurationCompact, formatMonthDay, formatWeekday } from '../../i18n/format'
 
 const props = withDefaults(
   defineProps<{
@@ -115,7 +117,6 @@ const props = withDefaults(
   { height: 220 }
 )
 
-const WEEK = '日一二三四五六'
 /** 左侧刻度区宽度 / 底部标签区高度 / 顶部留白 */
 const AXIS_W = 52
 const X_AXIS_H = 28
@@ -179,8 +180,7 @@ const layout = computed(() => {
     .map((d, i) => {
       if (labelStep > 1 && i % labelStep !== 0 && i !== n - 1) return null
       const date = parseDay(d.day)
-      const text =
-        n <= 7 ? `周${WEEK[date.getDay()]}` : `${date.getMonth() + 1}/${date.getDate()}`
+      const text = n <= 7 ? formatWeekday(date) : formatMonthDay(date)
       return { x: AXIS_W + slotW * i + slotW / 2, text, isToday: d.day === today }
     })
     .filter((l): l is NonNullable<typeof l> => l !== null)
@@ -196,13 +196,13 @@ const hoverDateText = computed(() => {
   const d = hoverBar.value
   if (!d) return ''
   const date = parseDay(d.day)
-  return `${date.getMonth() + 1}月${date.getDate()}日 周${WEEK[date.getDay()]}`
+  return `${formatMonthDay(date)} ${formatWeekday(date)}`
 })
 
 const hoverValueText = computed(() =>
   hoverBar.value && hoverBar.value.durationMs > 0
     ? formatDuration(hoverBar.value.durationMs)
-    : '未阅读'
+    : t('stats.unread')
 )
 
 const tooltipStyle = computed(() => ({

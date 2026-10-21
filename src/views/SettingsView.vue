@@ -1,52 +1,67 @@
 <template>
   <div class="settings-view">
     <header class="page-head">
-      <button class="ghost" @click="router.push('/')">← 返回</button>
-      <h1>设置</h1>
+      <button class="ghost" @click="router.push('/')">{{ t('common.back') }}</button>
+      <h1>{{ t('settings.title') }}</h1>
     </header>
 
     <div class="groups">
       <section class="group">
-        <h2 class="group-title">阅读偏好</h2>
+        <h2 class="group-title">{{ t('settings.group.general') }}</h2>
         <div class="group-card">
           <div class="row">
-            <span class="row-label">默认阅读模式</span>
+            <span class="row-label">{{ t('settings.language.label') }}</span>
+            <SelectMenu
+              v-model="form.locale"
+              :options="LOCALE_OPTIONS"
+              :label="t('settings.language.label')"
+              @change="save"
+            />
+          </div>
+        </div>
+      </section>
+
+      <section class="group">
+        <h2 class="group-title">{{ t('settings.group.reading') }}</h2>
+        <div class="group-card">
+          <div class="row">
+            <span class="row-label">{{ t('settings.mode.label') }}</span>
             <SelectMenu
               v-model="form.defaultMode"
               :options="MODE_OPTIONS"
-              label="默认阅读模式"
+              :label="t('settings.mode.label')"
               @change="save"
             />
           </div>
           <div class="row">
-            <span class="row-label">默认阅读方向</span>
+            <span class="row-label">{{ t('settings.direction.label') }}</span>
             <SelectMenu
               v-model="form.defaultDirection"
               :options="DIRECTION_OPTIONS"
-              label="默认阅读方向"
+              :label="t('settings.direction.label')"
               @change="save"
             />
           </div>
           <label class="row">
-            <span class="row-label">预加载页组数</span>
+            <span class="row-label">{{ t('settings.preload.label') }}</span>
             <input v-model.number="form.preloadSpreads" type="number" min="0" max="4" @change="save" />
           </label>
           <label class="row">
-            <span class="row-label">双页模式封面单独成页</span>
+            <span class="row-label">{{ t('settings.coverSingle.label') }}</span>
             <input v-model="form.coverSinglePage" type="checkbox" @change="save" />
           </label>
         </div>
       </section>
 
       <section class="group">
-        <h2 class="group-title">外观</h2>
+        <h2 class="group-title">{{ t('settings.group.appearance') }}</h2>
         <div class="group-card">
           <div class="row">
-            <span class="row-label">主题</span>
+            <span class="row-label">{{ t('settings.theme.label') }}</span>
             <SelectMenu
               v-model="form.theme"
               :options="THEME_OPTIONS"
-              label="主题"
+              :label="t('settings.theme.label')"
               @change="save"
             />
           </div>
@@ -54,12 +69,12 @@
       </section>
 
       <section class="group">
-        <h2 class="group-title">数据</h2>
+        <h2 class="group-title">{{ t('settings.group.data') }}</h2>
         <div class="group-card">
           <button class="row row-link" @click="router.push('/stats')">
-            <span class="row-label">阅读时间统计</span>
+            <span class="row-label">{{ t('settings.data.stats') }}</span>
             <span class="row-value">
-              查看阅读足迹
+              {{ t('settings.data.statsHint') }}
               <svg class="chevron" width="7" height="12" viewBox="0 0 7 12" aria-hidden="true">
                 <path
                   d="M1 1 L6 6 L1 11"
@@ -76,15 +91,15 @@
       </section>
 
       <section class="group">
-        <h2 class="group-title">关于</h2>
+        <h2 class="group-title">{{ t('settings.group.about') }}</h2>
         <div class="group-card">
           <div class="row">
-            <span class="row-label">当前版本</span>
+            <span class="row-label">{{ t('settings.about.version') }}</span>
             <span class="row-value">IReader v{{ currentVersion }}</span>
           </div>
           <!-- 单行态（仅按钮）标签与按钮垂直居中；出现说明 / 进度等附属行后由样式回退为顶部对齐 -->
           <div class="row update-row" :class="{ 'update-single': singleLine }">
-            <span class="row-label">软件更新</span>
+            <span class="row-label">{{ t('settings.update.label') }}</span>
             <div class="update-body">
               <!-- 更新说明：清洗后的纯文本，可折叠，限高内滚动 -->
               <p v-if="notesVisible" class="update-notes">{{ notesText }}</p>
@@ -96,24 +111,30 @@
                 </div>
                 <span class="progress-text">{{ progressText }}</span>
               </div>
-              <span v-else-if="state === 'checking'" class="update-text">正在检查更新…</span>
-              <span v-else-if="state === 'notAvailable'" class="update-text">已是最新版本</span>
-              <span v-else-if="state === 'available'" class="update-text">发现新版本 v{{ newVersion }}</span>
-              <span v-else-if="state === 'ready'" class="update-text">v{{ newVersion }} 已就绪，重启后自动完成安装</span>
+              <span v-else-if="state === 'checking'" class="update-text">{{ t('settings.update.checking') }}</span>
+              <span v-else-if="state === 'notAvailable'" class="update-text">{{ t('settings.update.upToDate') }}</span>
+              <span v-else-if="state === 'available'" class="update-text">
+                {{ t('settings.update.available', { version: newVersion ?? '' }) }}
+              </span>
+              <span v-else-if="state === 'ready'" class="update-text">
+                {{ t('settings.update.ready', { version: newVersion ?? '' }) }}
+              </span>
               <span v-else-if="errorMsg" class="update-text update-error">{{ errorMsg }}</span>
 
               <div class="update-actions">
                 <button v-if="notesText && state === 'available'" class="ghost" @click="showNotes = !showNotes">
-                  {{ showNotes ? '收起说明' : '查看说明' }}
+                  {{ showNotes ? t('settings.update.hideNotes') : t('settings.update.showNotes') }}
                 </button>
-                <button v-if="state === 'downloading'" disabled>下载中…</button>
-                <button v-else-if="state === 'checking'" disabled>检查中…</button>
-                <button v-else-if="state === 'ready'" class="primary" @click="install">重启并安装</button>
+                <button v-if="state === 'downloading'" disabled>{{ t('settings.update.downloading') }}</button>
+                <button v-else-if="state === 'checking'" disabled>{{ t('settings.update.checkingButton') }}</button>
+                <button v-else-if="state === 'ready'" class="primary" @click="install">
+                  {{ t('settings.update.restart') }}
+                </button>
                 <button v-else-if="state === 'available'" class="primary" @click="downloadOrOpen">
-                  {{ autoSupported ? '下载更新' : '前往下载' }}
+                  {{ autoSupported ? t('settings.update.download') : t('settings.update.gotoDownload') }}
                 </button>
-                <button v-else-if="errorMsg" @click="retry">重试</button>
-                <button v-else @click="check">检查更新</button>
+                <button v-else-if="errorMsg" @click="retry">{{ t('common.retry') }}</button>
+                <button v-else @click="check">{{ t('settings.update.check') }}</button>
               </div>
             </div>
           </div>
@@ -132,29 +153,38 @@ import { useRouter } from 'vue-router'
 import { useSettingsStore } from '../stores/settings'
 import { IpcError, ipc } from '../services/ipc'
 import { cleanReleaseNotes, formatBytes, formatSpeed } from '../services/updateFormat'
+import { t } from '../i18n'
+import { localizeError } from '../i18n/errors'
 import type { SelectOption } from '../services/selectMenu'
 import SelectMenu from '../components/ui/SelectMenu.vue'
-import type { Direction, ReadingMode, UpdateProgress } from '../../shared/types'
+import type { Direction, LocalePreference, ReadingMode, UpdateProgress } from '../../shared/types'
 
 const router = useRouter()
 const settingsStore = useSettingsStore()
 
 const form = reactive({ ...settingsStore.settings })
 
-// 下拉选项：value 与 Settings 字段的字面量联合对齐，SelectMenu 泛型据此推断
-const MODE_OPTIONS: SelectOption<ReadingMode>[] = [
-  { value: 'single', label: '单页' },
-  { value: 'double', label: '双页' },
-]
-const DIRECTION_OPTIONS: SelectOption<Direction>[] = [
-  { value: 'ltr', label: '左→右（韩漫）' },
-  { value: 'rtl', label: '右→左（日漫）' },
-]
-const THEME_OPTIONS: SelectOption<'system' | 'light' | 'dark'>[] = [
-  { value: 'system', label: '跟随系统' },
-  { value: 'light', label: '浅色' },
-  { value: 'dark', label: '深色' },
-]
+// 下拉选项：value 与 Settings 字段的字面量联合对齐，SelectMenu 泛型据此推断；
+// 含文案的选项一律 computed，切换语言时随 t() 重新求值
+const LOCALE_OPTIONS = computed<SelectOption<LocalePreference>[]>(() => [
+  { value: 'system', label: t('settings.language.system') },
+  { value: 'zh-CN', label: '中文' },
+  { value: 'en', label: 'English' },
+  { value: 'ja', label: '日本語' },
+])
+const MODE_OPTIONS = computed<SelectOption<ReadingMode>[]>(() => [
+  { value: 'single', label: t('settings.mode.single') },
+  { value: 'double', label: t('settings.mode.double') },
+])
+const DIRECTION_OPTIONS = computed<SelectOption<Direction>[]>(() => [
+  { value: 'ltr', label: t('settings.direction.ltr') },
+  { value: 'rtl', label: t('settings.direction.rtl') },
+])
+const THEME_OPTIONS = computed<SelectOption<'system' | 'light' | 'dark'>[]>(() => [
+  { value: 'system', label: t('settings.theme.system') },
+  { value: 'light', label: t('settings.theme.light') },
+  { value: 'dark', label: t('settings.theme.dark') },
+])
 
 onMounted(async () => {
   if (!settingsStore.loaded) await settingsStore.load()
@@ -199,7 +229,7 @@ const singleLine = computed(() => state.value === 'idle')
 const progressPercent = computed(() => Math.round(progress.value?.percent ?? 0))
 const progressText = computed(() => {
   const p = progress.value
-  if (!p) return '准备下载…'
+  if (!p) return t('settings.update.preparing')
   return `${progressPercent.value}% · ${formatBytes(p.transferred)} / ${formatBytes(p.total)} · ${formatSpeed(p.bytesPerSecond)}`
 })
 
@@ -231,9 +261,9 @@ async function check() {
     releaseUrl = result.releaseUrl
     autoSupported.value = result.autoUpdateSupported
   } catch (e) {
-    // 服务层已保证中文 message（UPDATER_UNAVAILABLE / UPDATER_FAILED）
+    // 主进程 message 仅作日志兜底：IpcError 按 code 映射，其余走本地状态文案
     state.value = 'idle'
-    errorMsg.value = e instanceof IpcError ? e.message : '检查更新失败'
+    errorMsg.value = e instanceof IpcError ? localizeError(e) : t('settings.update.checkFailed')
   }
 }
 
@@ -249,7 +279,7 @@ async function download() {
   } catch (e) {
     // 失败回 available：保留「下载更新」按钮供重试
     state.value = 'available'
-    errorMsg.value = e instanceof IpcError ? e.message : '下载更新失败'
+    errorMsg.value = e instanceof IpcError ? localizeError(e) : t('settings.update.downloadFailed')
   }
 }
 
@@ -323,11 +353,13 @@ function retry() {
   border-bottom: 1px solid var(--border);
 }
 
-/* 标签左对齐、统一宽度，控件靠右 */
+/* 标签左对齐、弹性宽度：英文长标签允许换行，控件优先 */
 .row-label {
-  flex: 0 0 180px;
+  flex: 0 1 200px;
+  min-width: 140px;
   font-size: 13.5px;
   color: var(--text-secondary);
+  overflow-wrap: break-word;
 }
 
 /* 「数据」分组入口行：整行可点，负边距撑满卡片宽度 */

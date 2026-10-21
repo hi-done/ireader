@@ -1,16 +1,10 @@
-// readingStats 单测：时长格式化、坐标轴取整、连续天数、相对日期
+// readingStats 单测：坐标轴取整、连续天数、排行口径
 // 对应设计文档《阅读时间统计功能设计方案》§11.1
 // 排行口径派生对应设计文档《书籍排行今日与总计切换设计方案》§9.1
+// 展示文案（时长 / 相对日期）用例已迁至 src/i18n/format.test.ts
 
 import { describe, expect, it } from 'vitest'
-import {
-  calcStreak,
-  formatDuration,
-  formatDurationCompact,
-  formatRelativeDay,
-  niceMax,
-  pickRankingBooks,
-} from './readingStats'
+import { calcStreak, niceMax, pickRankingBooks } from './readingStats'
 import type { BookReadingStat, DailyReadingStat } from '../../shared/types'
 
 const MIN = 60_000
@@ -20,42 +14,6 @@ const HOUR = 3_600_000
 function mkDays(list: Array<[string, number]>): DailyReadingStat[] {
   return list.map(([day, minutes]) => ({ day, durationMs: minutes * MIN }))
 }
-
-describe('formatDuration', () => {
-  it('不足一分钟显示 <1 分钟', () => {
-    expect(formatDuration(29_000)).toBe('<1 分钟')
-  })
-
-  it('分钟级显示 N 分钟', () => {
-    expect(formatDuration(46 * MIN)).toBe('46 分钟')
-  })
-
-  it('小时级显示 N 小时 M 分', () => {
-    expect(formatDuration(750 * MIN)).toBe('12 小时 30 分')
-  })
-
-  it('整小时省略分钟尾巴', () => {
-    expect(formatDuration(2 * HOUR)).toBe('2 小时')
-  })
-})
-
-describe('formatDurationCompact', () => {
-  it('零值显示 0', () => {
-    expect(formatDurationCompact(0)).toBe('0')
-  })
-
-  it('分钟级显示 N 分', () => {
-    expect(formatDurationCompact(20 * MIN)).toBe('20 分')
-  })
-
-  it('整小时显示 N 时', () => {
-    expect(formatDurationCompact(HOUR)).toBe('1 时')
-  })
-
-  it('半小时倍数显示 1.5 时', () => {
-    expect(formatDurationCompact(90 * MIN)).toBe('1.5 时')
-  })
-})
 
 describe('niceMax', () => {
   it('取不小于最大值的分钟阶梯', () => {
@@ -134,25 +92,5 @@ describe('pickRankingBooks', () => {
   it('今日全部未读返回空数组', () => {
     const books = [mkBook(1, 300, 0), mkBook(2, 200, 0)]
     expect(pickRankingBooks(books, 'today')).toEqual([])
-  })
-})
-
-describe('formatRelativeDay', () => {
-  const now = new Date(2026, 9, 15, 12, 0, 0).getTime()
-
-  it('今天', () => {
-    expect(formatRelativeDay(new Date(2026, 9, 15, 8, 0).getTime(), now)).toBe('今天')
-  })
-
-  it('昨天', () => {
-    expect(formatRelativeDay(new Date(2026, 9, 14, 23, 0).getTime(), now)).toBe('昨天')
-  })
-
-  it('N 天前', () => {
-    expect(formatRelativeDay(new Date(2026, 9, 10).getTime(), now)).toBe('5 天前')
-  })
-
-  it('超过 30 天显示日期', () => {
-    expect(formatRelativeDay(new Date(2026, 8, 5).getTime(), now)).toBe('2026/9/5')
   })
 })

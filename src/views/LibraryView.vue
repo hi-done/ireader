@@ -5,32 +5,34 @@
       <!-- 背景图为整窗底图（.library-view 承载）；此处深色渐变保障白字可读 -->
       <div class="hero-veil" aria-hidden="true" />
       <div class="hero-inner">
-        <h1 class="hero-title">漫画文库</h1>
-        <p class="hero-sub">本地离线阅读，随时接续上次的进度</p>
+        <h1 class="hero-title">{{ t('library.title') }}</h1>
+        <p class="hero-sub">{{ t('library.subtitle') }}</p>
         <div class="hero-actions">
-          <button class="btn-primary" @click="onImportFiles">＋ 导入书籍</button>
-          <button class="hero-ghost" @click="onImportFolder">导入文件夹</button>
+          <button class="btn-primary" @click="onImportFiles">{{ t('library.import') }}</button>
+          <button class="hero-ghost" @click="onImportFolder">{{ t('library.importFolder') }}</button>
         </div>
       </div>
     </section>
 
     <!-- 合集视图头部：返回 / 标题 / 数量 / 解散 -->
     <header v-else class="collection-head">
-      <button class="ghost" @click="backHome">← 返回</button>
+      <button class="ghost" @click="backHome">{{ t('common.back') }}</button>
       <div class="collection-head-info">
         <h1 class="collection-title">{{ activeCollection.title }}</h1>
-        <span class="collection-meta">合集 · {{ collectionBooks.length }} 本 · 按名称排序</span>
+        <span class="collection-meta">
+          {{ tp('library.collection.meta', collectionBooks.length) }}
+        </span>
       </div>
       <button class="ghost danger-text" @click="askDissolve">
-        {{ dissolveArmed ? '确认解散？' : '解散合集' }}
+        {{ dissolveArmed ? t('library.collection.dissolveConfirm') : t('library.collection.dissolve') }}
       </button>
     </header>
 
     <!-- 合集视图工具行：导入直入合集 / 从主页多选添加 -->
     <div v-if="activeCollection" class="toolbar collection-toolbar">
-      <button class="btn-primary" @click="onImportFiles">＋ 导入书籍</button>
-      <button @click="onImportFolder">导入文件夹</button>
-      <button @click="addFromHome = true">从主页添加</button>
+      <button class="btn-primary" @click="onImportFiles">{{ t('library.import') }}</button>
+      <button @click="onImportFolder">{{ t('library.importFolder') }}</button>
+      <button @click="addFromHome = true">{{ t('library.collection.addFromHome') }}</button>
     </div>
 
     <!-- 工具行：搜索 / 排序 / 新建合集 / 设置 -->
@@ -39,27 +41,27 @@
         v-model="library.keyword"
         class="search-input"
         type="text"
-        placeholder="搜索书名…"
+        :placeholder="t('library.search.placeholder')"
       />
       <div class="toolbar-group">
         <SelectMenu
           v-model="library.sortBy"
           class="sort-select"
           :options="SORT_OPTIONS"
-          label="排序方式"
+          :label="t('library.sort.label')"
         />
         <button class="order-btn" @click="toggleOrder">
-          {{ library.sortOrder === 'asc' ? '↑ 升序' : '↓ 降序' }}
+          {{ library.sortOrder === 'asc' ? t('library.order.asc') : t('library.order.desc') }}
         </button>
         <span v-if="library.keyword" class="result-count">
           {{ resultSummary }}
         </span>
       </div>
-      <button class="ghost" @click="creatingCollection = true">＋ 新建合集</button>
-      <RouterLink class="settings-link" to="/settings">设置</RouterLink>
+      <button class="ghost" @click="creatingCollection = true">{{ t('library.newCollection') }}</button>
+      <RouterLink class="settings-link" to="/settings">{{ t('library.settings') }}</RouterLink>
     </div>
 
-    <section v-if="library.loading" class="state-tip">加载中…</section>
+    <section v-if="library.loading" class="state-tip">{{ t('library.loading') }}</section>
 
     <!-- 合集视图：左侧集内书（名称升序，× = 移出合集）+ 右侧“继续阅读”栏 -->
     <div v-else-if="activeCollection" class="collection-body">
@@ -69,25 +71,25 @@
             v-for="book in collectionBooks"
             :key="book.id"
             :book="book"
-            remove-label="移出合集"
+            :remove-label="t('library.collection.removeLabel')"
             @open="openBook"
             @remove="removeFromCollection"
             @rename="askRename"
             @move="askMove"
           />
           <p v-if="!collectionBooks.length" class="empty-inline">
-            合集还是空的，回主页把漫画移进来吧
+            {{ t('library.collection.empty') }}
           </p>
         </section>
       </div>
 
       <aside class="collection-side">
-        <h2 class="side-title">继续阅读</h2>
+        <h2 class="side-title">{{ t('library.collection.sideTitle') }}</h2>
         <div class="side-center">
           <template v-if="sideBook">
             <div
               class="book-3d"
-              :title="`打开《${sideBook.title}》`"
+              :title="t('library.openBook', { title: sideBook.title })"
               @click="openBook(sideBook.id)"
             >
               <img
@@ -96,21 +98,21 @@
                 :src="sideBook.coverUrl"
                 :alt="sideBook.title"
               />
-              <div v-else class="book-3d-cover book-3d-placeholder">无封面</div>
+              <div v-else class="book-3d-cover book-3d-placeholder">{{ t('common.noCover') }}</div>
               <!-- 书页厚度（右 + 底），营造立体感 -->
               <div class="book-3d-pages" aria-hidden="true" />
             </div>
             <p class="book-3d-name" :title="sideBook.title">{{ sideBook.title }}</p>
           </template>
-          <p v-else class="side-empty">合集中还没有漫画</p>
+          <p v-else class="side-empty">{{ t('library.collection.noBooks') }}</p>
         </div>
         <div v-if="sideBook" class="side-nav">
-          <button :disabled="sideIndex <= 0" @click="shiftSideBook(-1)">‹ 上一本</button>
+          <button :disabled="sideIndex <= 0" @click="shiftSideBook(-1)">{{ t('library.collection.prev') }}</button>
           <button
             :disabled="sideIndex >= collectionBooks.length - 1"
             @click="shiftSideBook(1)"
           >
-            下一本 ›
+            {{ t('library.collection.next') }}
           </button>
         </div>
       </aside>
@@ -140,16 +142,20 @@
     </section>
 
     <section v-else class="state-tip empty">
-      <p>{{ library.keyword ? '没有匹配的内容' : '文库还是空的' }}</p>
+      <p>{{ library.keyword ? t('library.empty.noMatch') : t('library.empty.title') }}</p>
       <div v-if="!library.keyword" class="empty-actions">
-        <button class="btn-primary" @click="onImportFiles">导入书籍</button>
-        <button class="ghost" @click="onImportFolder">导入文件夹</button>
+        <button class="btn-primary" @click="onImportFiles">{{ t('library.importPlain') }}</button>
+        <button class="ghost" @click="onImportFolder">{{ t('library.importFolder') }}</button>
       </div>
     </section>
 
     <footer v-if="coverQueueState.pending > 0" class="cover-progress">
-      封面生成中 {{ coverQueueState.done + 1 }} / {{ coverQueueState.total }}：{{
-        coverQueueState.currentTitle
+      {{
+        t('library.coverGenerating', {
+          done: coverQueueState.done + 1,
+          total: coverQueueState.total,
+          title: coverQueueState.currentTitle ?? '',
+        })
       }}
     </footer>
 
@@ -174,9 +180,9 @@
 
     <TextPromptDialog
       v-if="renamingBook"
-      title="重命名"
+      :title="t('library.rename.title')"
       :initial-value="renamingBook.title"
-      placeholder="输入新的书名"
+      :placeholder="t('library.rename.placeholder')"
       @cancel="renamingBook = null"
       @confirm="confirmRename"
     />
@@ -184,9 +190,9 @@
     <!-- 新建合集 -->
     <TextPromptDialog
       v-if="creatingCollection"
-      title="新建合集"
+      :title="t('library.newCollection.title')"
       initial-value=""
-      placeholder="输入合集名称"
+      :placeholder="t('library.newCollection.placeholder')"
       @cancel="creatingCollection = false"
       @confirm="confirmCreateCollection"
     />
@@ -229,17 +235,19 @@ import AddBooksDialog from '../components/library/AddBooksDialog.vue'
 import RemoveConfirmDialog from '../components/library/RemoveConfirmDialog.vue'
 import MissingFileDialog from '../components/library/MissingFileDialog.vue'
 import TextPromptDialog from '../components/library/TextPromptDialog.vue'
+import { appLocale, t, tp } from '../i18n'
+import { compareTitles } from '../services/libraryList'
 
 const library = useLibraryStore()
 const router = useRouter()
 const route = useRoute()
 
 // 排序下拉选项：value 与 SortBy 对齐，SelectMenu 泛型据此推断
-const SORT_OPTIONS: SelectOption<SortBy>[] = [
-  { value: 'lastOpenedAt', label: '最近阅读' },
-  { value: 'addedAt', label: '添加时间' },
-  { value: 'title', label: '书名' },
-]
+const SORT_OPTIONS = computed<SelectOption<SortBy>[]>(() => [
+  { value: 'lastOpenedAt', label: t('library.sort.recent') },
+  { value: 'addedAt', label: t('library.sort.added') },
+  { value: 'title', label: t('library.sort.title') },
+])
 
 // —— 通知条 ——
 const toast = ref('')
@@ -285,10 +293,20 @@ async function importAndReport(paths: string[], collectionId: number | null = nu
   const result = await library.importPaths(paths, collectionId)
   enqueueCovers(result.added)
   const target = collectionId !== null ? library.collections.find((c) => c.id === collectionId) : null
+  const count = result.added.length
+  // 四组合：是否指定合集 × 是否有跳过
+  if (target) {
+    showToast(
+      result.skipped
+        ? tp('library.toast.importedToSkipped', count, { title: target.title, skipped: result.skipped })
+        : tp('library.toast.importedTo', count, { title: target.title })
+    )
+    return
+  }
   showToast(
-    `已导入 ${result.added.length} 本${target ? `至「${target.title}」` : ''}${
-      result.skipped ? `，跳过 ${result.skipped} 本（已存在）` : ''
-    }`
+    result.skipped
+      ? tp('library.toast.importedSkipped', count, { skipped: result.skipped })
+      : tp('library.toast.imported', count)
   )
 }
 
@@ -300,7 +318,7 @@ async function confirmAddFromHome(bookIds: number[]) {
   const collection = activeCollection.value
   if (!collection || !bookIds.length) return
   await library.moveToCollection(bookIds, collection.id)
-  showToast(`已添加 ${bookIds.length} 本至「${collection.title}」`)
+  showToast(tp('library.toast.addedToCollection', bookIds.length, { title: collection.title }))
 }
 
 // —— 打开（缺失拦截）——
@@ -333,7 +351,7 @@ async function confirmRemove(deleteFile: boolean) {
   if (!book) return
   removeFromQueue(book.id)
   await library.remove(book.id, deleteFile)
-  showToast(deleteFile ? `已移除并删除《${book.title}》` : `已移除《${book.title}》`)
+  showToast(t(deleteFile ? 'library.toast.removedWithFile' : 'library.toast.removed', { title: book.title }))
 }
 
 // —— 缺失重定位（§8.2：重新定位/移除/取消）——
@@ -346,7 +364,7 @@ async function relinkMissing() {
   const paths = await ipc.dialog.pickBookFiles()
   if (!paths?.length) return
   await library.relink(book.id, paths[0])
-  showToast(`已重新定位《${book.title}》`)
+  showToast(t('library.toast.relinked', { title: book.title }))
 }
 
 async function removeMissing() {
@@ -355,7 +373,7 @@ async function removeMissing() {
   if (!book) return
   removeFromQueue(book.id)
   await library.remove(book.id)
-  showToast(`已移除《${book.title}》`)
+  showToast(t('library.toast.removed', { title: book.title }))
 }
 
 // —— 重命名 ——
@@ -370,7 +388,7 @@ async function confirmRename(title: string) {
   renamingBook.value = null
   if (!book) return
   await library.rename(book.id, title)
-  showToast(`已重命名为《${title}》`)
+  showToast(t('library.toast.renamed', { title }))
 }
 
 // —— 排序方向 ——
@@ -392,16 +410,16 @@ const resultSummary = computed(() => {
   const parts: string[] = []
   const collectionCount = library.sortedCollections.length
   const bookCount = library.filteredBooks.length
-  if (collectionCount) parts.push(`${collectionCount} 个合集`)
-  if (bookCount) parts.push(`${bookCount} 本`)
-  return parts.length ? parts.join(' · ') : '无匹配'
+  if (collectionCount) parts.push(tp('common.collectionCount', collectionCount))
+  if (bookCount) parts.push(tp('common.bookCount', bookCount))
+  return parts.length ? parts.join(' · ') : t('library.result.none')
 })
 
 /** 合集视图内的书：固定名称升序（与封面取书规则一致） */
 const collectionBooks = computed(() =>
   library.books
     .filter((b) => b.collectionId === activeCollectionId.value)
-    .sort((a, b) => a.title.localeCompare(b.title, 'zh-Hans-CN'))
+    .sort((a, b) => compareTitles(a.title, b.title, appLocale.value))
 )
 
 // —— 右侧“继续阅读”栏：默认显示合集内最近阅读的一本，
@@ -453,7 +471,7 @@ const creatingCollection = ref(false)
 async function confirmCreateCollection(title: string) {
   creatingCollection.value = false
   await library.createCollection(title)
-  showToast(`已创建合集「${title}」`)
+  showToast(t('library.toast.collectionCreated', { title }))
 }
 
 // —— 移入合集 ——
@@ -468,11 +486,12 @@ async function confirmMove(collectionId: number | null) {
   movingBook.value = null
   if (!book) return
   await library.moveToCollection([book.id], collectionId)
-  showToast(
-    collectionId === null
-      ? `已将《${book.title}》移回未分组`
-      : `已将《${book.title}》移入「${library.collections.find((c) => c.id === collectionId)?.title ?? '合集'}」`
-  )
+  if (collectionId === null) {
+    showToast(t('library.toast.movedToUngrouped', { title: book.title }))
+    return
+  }
+  const target = library.collections.find((c) => c.id === collectionId)
+  showToast(t('library.toast.movedToCollection', { title: book.title, collection: target?.title ?? '' }))
 }
 
 /** 对话框内“新建并移入”：先建合集再移动，一步完成 */
@@ -482,7 +501,7 @@ async function confirmCreateAndMove(title: string) {
   if (!book) return
   const created = await library.createCollection(title)
   await library.moveToCollection([book.id], created.id)
-  showToast(`已创建合集「${title}」并移入《${book.title}》`)
+  showToast(t('library.toast.createdAndMoved', { title, book: book.title }))
 }
 
 // —— 合集视图内移出（轻操作，不弹确认） ——
@@ -490,7 +509,7 @@ async function removeFromCollection(bookId: number) {
   const book = library.books.find((b) => b.id === bookId)
   if (!book) return
   await library.moveToCollection([bookId], null)
-  showToast(`已将《${book.title}》移回未分组`)
+  showToast(t('library.toast.movedToUngrouped', { title: book.title }))
 }
 
 // —— 解散合集（成员回未分组；二次点击确认防误触） ——
@@ -512,7 +531,7 @@ function askDissolve() {
   router.push({ query: {} })
   if (collection && id !== null) {
     void library.dissolveCollection(id)
-    showToast(`已解散合集「${collection.title}」，成员已移回未分组`)
+    showToast(t('library.toast.dissolved', { title: collection.title }))
   }
 }
 </script>

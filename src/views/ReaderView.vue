@@ -11,51 +11,51 @@
     @mouseup="onMouseUp"
   >
     <header class="top-bar" :class="{ visible: barsVisible }">
-      <button class="icon-btn" @click="goBack">← 返回</button>
+      <button class="icon-btn" @click="goBack">{{ t('common.back') }}</button>
       <span class="title">{{ bookTitle }}</span>
       <button
         class="book-nav"
         :disabled="prevBookId == null"
-        title="上一本"
+        :title="t('reader.prevBookTitle')"
         @click="switchBook(-1)"
       >
-        ‹ 上一本
+        {{ t('reader.prevBook') }}
       </button>
       <button
         class="book-nav"
         :disabled="nextBookId == null"
-        title="下一本"
+        :title="t('reader.nextBookTitle')"
         @click="switchBook(1)"
       >
-        下一本 ›
+        {{ t('reader.nextBook') }}
       </button>
       <div class="controls">
         <button @click="reader.setMode(reader.mode === 'single' ? 'double' : 'single')">
-          {{ reader.mode === 'single' ? '单页' : '双页' }}
+          {{ reader.mode === 'single' ? t('reader.single') : t('reader.double') }}
         </button>
         <button @click="reader.setDirection(reader.direction === 'ltr' ? 'rtl' : 'ltr')">
-          {{ reader.direction === 'ltr' ? '左→右' : '右→左' }}
+          {{ reader.direction === 'ltr' ? t('reader.dirLtr') : t('reader.dirRtl') }}
         </button>
         <SelectMenu
           class="zoom-select"
           :model-value="reader.zoomMode"
           :options="ZOOM_MODE_OPTIONS"
-          label="缩放"
-          title="缩放"
+          :label="t('reader.zoom')"
+          :title="t('reader.zoom')"
           @change="onZoomSelect"
           @open="pinBars"
           @close="unpinBars"
         />
-        <button title="全屏（F）" @click="toggleFullscreen">⛶</button>
+        <button :title="t('reader.fullscreen')" @click="toggleFullscreen">⛶</button>
       </div>
     </header>
 
     <div ref="pageAreaEl" class="page-area">
       <div v-if="loadError" class="state-tip">
-        <p>无法打开本书：{{ loadError }}</p>
-        <button @click="goBack">返回文库</button>
+        <p>{{ t('reader.loadFailed', { message: loadError }) }}</p>
+        <button @click="goBack">{{ t('reader.backToLibrary') }}</button>
       </div>
-      <div v-else-if="!reader.doc" class="state-tip">加载中…</div>
+      <div v-else-if="!reader.doc" class="state-tip">{{ t('reader.loading') }}</div>
       <template v-else>
         <!-- margin:auto：内容小于视口时居中，超出视口时可滚动到边缘 -->
         <div ref="pageContentEl" class="page-content">
@@ -80,7 +80,7 @@
         :disabled="reader.currentIndex <= 0"
         @click="reader.prev()"
       >
-        ‹ 上一页
+        {{ t('reader.prevPage') }}
       </button>
       <input
         class="page-slider"
@@ -96,7 +96,7 @@
         :disabled="reader.currentIndex >= reader.spreads.length - 1"
         @click="reader.next()"
       >
-        下一页 ›
+        {{ t('reader.nextPage') }}
       </button>
     </footer>
   </div>
@@ -129,6 +129,9 @@ import {
   type WheelScrollState,
 } from '../services/wheelScroll'
 import EpubReaderView from './EpubReaderView.vue'
+import { appLocale, t } from '../i18n'
+import { localizeError } from '../i18n/errors'
+import { compareTitles } from '../services/libraryList'
 
 const route = useRoute()
 const router = useRouter()
@@ -146,12 +149,15 @@ const isEpub = computed(
 // 顶栏缩放下拉：custom 档位仅在生效时出现，标签带上实际百分比
 const ZOOM_MODE_OPTIONS = computed<SelectOption<ZoomMode>[]>(() => {
   const options: SelectOption<ZoomMode>[] = [
-    { value: 'fitWidth', label: '适宽' },
-    { value: 'fitHeight', label: '适高' },
-    { value: 'original', label: '原始' },
+    { value: 'fitWidth', label: t('reader.fitWidth') },
+    { value: 'fitHeight', label: t('reader.fitHeight') },
+    { value: 'original', label: t('reader.original') },
   ]
   if (reader.zoomMode === 'custom') {
-    options.push({ value: 'custom', label: `自定义 ${Math.round(reader.zoomScale * 100)}%` })
+    options.push({
+      value: 'custom',
+      label: t('reader.customZoom', { percent: Math.round(reader.zoomScale * 100) }),
+    })
   }
   return options
 })
@@ -298,7 +304,7 @@ function openBook(id: number) {
       showBarsTemporarily()
     })
     .catch((e) => {
-      loadError.value = e instanceof Error ? e.message : String(e)
+      loadError.value = localizeError(e)
     })
 }
 
@@ -325,7 +331,7 @@ const contextBooks = computed(() => {
   if (typeof cid === 'string' && cid) {
     return [...library.books]
       .filter((b) => b.collectionId === Number(cid))
-      .sort((a, b) => a.title.localeCompare(b.title, 'zh-Hans-CN'))
+      .sort((a, b) => compareTitles(a.title, b.title, appLocale.value))
   }
   return library.filteredBooks.filter((b) => !b.collectionId)
 })

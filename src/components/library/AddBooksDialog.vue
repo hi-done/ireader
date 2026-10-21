@@ -1,15 +1,15 @@
 <template>
   <div class="dialog-mask" @click.self="$emit('close')">
     <div class="dialog">
-      <h3 class="dialog-title">添加主页漫画</h3>
-      <p class="dialog-sub">勾选要加入「{{ collectionTitle }}」的漫画，添加后将从主页移入合集</p>
+      <h3 class="dialog-title">{{ t('library.addDialog.title') }}</h3>
+      <p class="dialog-sub">{{ t('library.addDialog.hint', { title: collectionTitle }) }}</p>
 
       <div class="filter-row">
         <input
           v-model="keyword"
           class="filter-input"
           type="text"
-          placeholder="搜索书名，空格分隔多个词…"
+          :placeholder="t('library.addDialog.searchPlaceholder')"
         />
         <label class="select-all">
           <input
@@ -18,7 +18,7 @@
             :indeterminate="someSelected && !allSelected"
             @change="toggleSelectAll"
           />
-          全选
+          {{ t('library.addDialog.selectAll') }}
         </label>
       </div>
 
@@ -28,20 +28,20 @@
           <span class="book-name">{{ b.title }}</span>
         </label>
         <p v-if="!filteredBooks.length" class="empty-tip">
-          {{ books.length ? '没有匹配的书' : '主页还没有未分组的漫画，可先在合集内直接导入' }}
+          {{ books.length ? t('library.addDialog.noMatch') : t('library.addDialog.empty') }}
         </p>
       </div>
 
       <div class="dialog-actions">
-        <span class="count-tip">已选 {{ checked.length }} 本</span>
+        <span class="count-tip">{{ tp('library.addDialog.selected', checked.length) }}</span>
         <div class="action-group">
-          <button @click="$emit('close')">取消</button>
+          <button @click="$emit('close')">{{ t('common.cancel') }}</button>
           <button
             class="primary"
             :disabled="!checked.length"
             @click="$emit('confirm', [...checked])"
           >
-            添加
+            {{ t('library.addDialog.submit') }}
           </button>
         </div>
       </div>
@@ -52,6 +52,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import type { Book } from '../../../shared/types'
+import { t, tp } from '../../i18n'
 
 const props = defineProps<{ books: Book[]; collectionTitle: string }>()
 defineEmits<{ close: []; confirm: [bookIds: number[]] }>()
@@ -65,8 +66,8 @@ const filteredBooks = computed(() => {
   const words = keyword.value.trim().toLowerCase().split(/\s+/).filter(Boolean)
   if (!words.length) return props.books
   return props.books.filter((b) => {
-    const t = b.title.toLowerCase()
-    return words.every((w) => t.includes(w))
+    const lowerTitle = b.title.toLowerCase()
+    return words.every((w) => lowerTitle.includes(w))
   })
 })
 

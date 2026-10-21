@@ -1,22 +1,27 @@
 <template>
   <div class="dialog-mask" @click.self="$emit('cancel')">
     <div class="dialog" role="dialog" aria-modal="true">
-      <h2 class="dialog-title">移除书籍</h2>
+      <h2 class="dialog-title">{{ t('library.removeDialog.title') }}</h2>
       <p class="dialog-body">
-        确定从文库移除《{{ book.title }}》吗？
+        {{ t('library.removeDialog.body', { title: book.title }) }}
       </p>
       <div class="dialog-actions">
-        <button class="btn" @click="$emit('cancel')">取消</button>
-        <button class="btn" @click="$emit('confirm', false)">仅移除记录</button>
-        <button class="btn danger" @click="$emit('confirm', true)">同时删除文件</button>
+        <button class="btn" @click="$emit('cancel')">{{ t('common.cancel') }}</button>
+        <button class="btn" @click="$emit('confirm', false)">
+          {{ t('library.removeDialog.recordOnly') }}
+        </button>
+        <button class="btn danger" @click="$emit('confirm', true)">
+          {{ t('library.removeDialog.withFile') }}
+        </button>
       </div>
-      <p class="dialog-hint">「同时删除文件」会把原 PDF 从磁盘一并删除，且无法恢复。</p>
+      <p class="dialog-hint">{{ t('library.removeDialog.hint') }}</p>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
 import type { Book } from '../../../shared/types'
+import { t } from '../../i18n'
 
 defineProps<{ book: Book }>()
 defineEmits<{ cancel: []; confirm: [deleteFile: boolean] }>()

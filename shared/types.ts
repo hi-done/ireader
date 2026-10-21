@@ -42,6 +42,12 @@ export interface Collection {
   createdAt: number
 }
 
+/** 界面语言偏好；system = 跟随操作系统语言 */
+export const LOCALE_PREFERENCES = ['system', 'zh-CN', 'en', 'ja'] as const
+export type LocalePreference = (typeof LOCALE_PREFERENCES)[number]
+/** 实际生效的界面语言（不含 system） */
+export type AppLocale = 'zh-CN' | 'en' | 'ja'
+
 export interface Settings {
   defaultMode: ReadingMode
   defaultDirection: Direction
@@ -50,6 +56,8 @@ export interface Settings {
   coverSinglePage: boolean
   /** EPUB 字号百分比（100 = 默认） */
   epubFontSize: number
+  /** 界面语言偏好 */
+  locale: LocalePreference
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -59,6 +67,7 @@ export const DEFAULT_SETTINGS: Settings = {
   preloadSpreads: 2,
   coverSinglePage: true,
   epubFontSize: 100,
+  locale: 'system',
 }
 
 export type ErrorCode =
@@ -185,6 +194,20 @@ export interface UpdateProgress {
   total: number
   /** 字节/秒 */
   bytesPerSecond: number
+}
+
+/**
+ * 解析生效语言：用户显式偏好优先；system 按系统语言前缀匹配，中文/日文以外回退英文。
+ * 双进程共用（主进程 app.getLocale() / 渲染层 navigator.language）。
+ */
+export function resolveLocale(preference: LocalePreference, systemLocale: string): AppLocale {
+  if (preference === 'zh-CN' || preference === 'en' || preference === 'ja') return preference
+  // 运行期脏数据（持久化的非法值）一律回退英文，避免被误判为「跟随系统」
+  if ((preference as string) !== 'system') return 'en'
+  const tag = systemLocale.toLowerCase()
+  if (tag.startsWith('zh')) return 'zh-CN'
+  if (tag.startsWith('ja')) return 'ja'
+  return 'en'
 }
 
 /**

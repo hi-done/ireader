@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import { markRaw, ref, shallowRef } from 'vue'
 import type { Direction, ReadingMode, ZoomMode } from '../../shared/types'
 import { ipc } from '../services/ipc'
+import { t } from '../i18n'
 import { loadPdfWithTask, type PdfLoadingTask } from '../services/pdf'
 import type { PageDocument } from '../services/pageRenderer'
 import { buildSpreads, findSpreadIndexByPage, type Spread } from '../services/spread'
@@ -45,7 +46,7 @@ export const useReaderStore = defineStore('reader', () => {
     bookId.value = id
     if (result.format === 'cbz') {
       // 页数来自导入时的图片条目统计；为 0 说明压缩包不可用，与 PDF 加载失败同样进错误页
-      if (result.numPages <= 0) throw new Error('压缩包中没有可识别的图片')
+      if (result.numPages <= 0) throw new Error(t('reader.zipNoImages'))
       doc.value = markRaw({ kind: 'cbz' as const, bookId: id })
       numPages.value = result.numPages
     } else {

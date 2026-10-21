@@ -12,10 +12,12 @@ import { progressRepo } from '../db/repos/progressRepo'
 import { settingsRepo } from '../db/repos/settingsRepo'
 import { statsService } from '../services/statsService'
 import { updaterService } from '../services/updaterService'
+import { getBookFilesFilterName } from '../services/appLocale'
 import fs from 'node:fs'
 import {
   fail,
   ok,
+  LOCALE_PREFERENCES,
   type AppError,
   type CaptureRegionRect,
   type LibraryChangedPayload,
@@ -67,7 +69,7 @@ export function registerIpcHandlers(getWin: () => BrowserWindow | null): void {
     if (!win) return ok(null)
     const { canceled, filePaths } = await dialog.showOpenDialog(win, {
       properties: ['openFile', 'multiSelections'],
-      filters: [{ name: '书籍与漫画', extensions: ['pdf', 'epub', 'zip', 'cbz'] }],
+      filters: [{ name: getBookFilesFilterName(), extensions: ['pdf', 'epub', 'zip', 'cbz'] }],
     })
     return ok(canceled ? null : filePaths)
   })
@@ -196,7 +198,13 @@ export function registerIpcHandlers(getWin: () => BrowserWindow | null): void {
 
   ipcMain.handle(
     'settings:patch',
-    wrap((partial: Parameters<typeof settingsRepo.patch>[0]) => settingsRepo.patch(partial))
+    wrap((partial: Parameters<typeof settingsRepo.patch>[0]) => {
+      // locale 白名单校验：阻止持久化脏值导致渲染层词典查找失败
+      if (partial.locale !== undefined && !LOCALE_PREFERENCES.includes(partial.locale)) {
+        throw { code: 'INVALID_PARAMS', message: 'locale 取值无效' } as AppError
+      }
+      return settingsRepo.patch(partial)
+    })
   )
 
   ipcMain.handle(

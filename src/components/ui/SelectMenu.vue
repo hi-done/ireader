@@ -9,7 +9,7 @@
       :aria-expanded="open"
       :aria-controls="listId"
       :aria-activedescendant="activeDescendant"
-      :aria-label="`${label}：${selectedLabel}`"
+      :aria-label="t('common.labelValue', { label, value: selectedLabel })"
       :title="title"
       :disabled="disabled"
       @click="toggle"
@@ -86,6 +86,7 @@ function nextMenuId(): string {
 // 通用自绘下拉：完全受控（modelValue + emit），不访问 IPC / store，设置页 / 文库页 / 阅读页共用
 // 对应设计文档《设置页与文库下拉菜单苹果风格美化设计方案》§5.1 / §6
 import { computed, nextTick, onBeforeUnmount, ref } from 'vue'
+import { t } from '../../i18n'
 import {
   clampMenuLeft,
   initialActiveIndex,

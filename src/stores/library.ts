@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import { computed, ref, watch } from 'vue'
 import type { Book, Collection, SortBy, SortOrder } from '../../shared/types'
 import { ipc } from '../services/ipc'
+import { appLocale } from '../i18n'
 import { filterCollectionsByKeyword, sortBooks, sortCollections } from '../services/libraryList'
 
 const SORT_PREF_KEY = 'ireader.sort'
@@ -51,7 +52,8 @@ export const useLibraryStore = defineStore('library', () => {
   const filteredBooks = computed(() => {
     const kw = keyword.value.trim().toLowerCase()
     const list = kw ? books.value.filter((b) => b.title.toLowerCase().includes(kw)) : books.value
-    return sortBooks(list, sortBy.value, sortOrder.value)
+    // 传界面语言：切语言时 computed 自动重排为对应 collation
+    return sortBooks(list, sortBy.value, sortOrder.value, appLocale.value)
   })
 
   /** 主页合集卡：关键字命中合集名或集内书名时保留，并按当前排序偏好排列 */
@@ -60,7 +62,8 @@ export const useLibraryStore = defineStore('library', () => {
       filterCollectionsByKeyword(collections.value, books.value, keyword.value),
       books.value,
       sortBy.value,
-      sortOrder.value
+      sortOrder.value,
+      appLocale.value
     )
   )
 

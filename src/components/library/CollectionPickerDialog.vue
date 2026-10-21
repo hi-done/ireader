@@ -1,8 +1,8 @@
 <template>
   <div class="dialog-mask" @click.self="$emit('close')">
     <div class="dialog">
-      <h3 class="dialog-title">移入合集</h3>
-      <p class="dialog-book">《{{ book.title }}》</p>
+      <h3 class="dialog-title">{{ t('library.picker.title') }}</h3>
+      <p class="dialog-book">{{ t('library.picker.bookTitle', { title: book.title }) }}</p>
 
       <div class="coll-list">
         <button
@@ -12,34 +12,36 @@
           @click="$emit('select', c.id)"
         >
           <span class="coll-name">{{ c.title }}</span>
-          <span class="coll-count">{{ countOf(c.id) }} 本</span>
+          <span class="coll-count">{{ tp('common.bookCount', countOf(c.id)) }}</span>
         </button>
 
         <!-- 书已在某合集时提供"移回未分组" -->
         <button v-if="book.collectionId !== null" class="coll-item" @click="$emit('select', null)">
-          <span class="coll-name">未分组</span>
-          <span class="coll-count">移出当前合集</span>
+          <span class="coll-name">{{ t('library.picker.ungrouped') }}</span>
+          <span class="coll-count">{{ t('library.picker.removeFromCurrent') }}</span>
         </button>
 
         <p v-if="!selectableCollections.length && book.collectionId === null" class="empty-tip">
-          还没有合集，先创建一个吧
+          {{ t('library.picker.empty') }}
         </p>
       </div>
 
       <div v-if="!creating" class="dialog-actions">
-        <button class="ghost" @click="creating = true">＋ 新建合集</button>
-        <button @click="$emit('close')">取消</button>
+        <button class="ghost" @click="creating = true">{{ t('library.picker.newCollection') }}</button>
+        <button @click="$emit('close')">{{ t('common.cancel') }}</button>
       </div>
       <div v-else class="create-row">
         <input
           v-model="newTitle"
           class="create-input"
-          placeholder="合集名称"
+          :placeholder="t('library.picker.namePlaceholder')"
           autofocus
           @keyup.enter="create"
         />
-        <button class="primary" :disabled="!newTitle.trim()" @click="create">创建并移入</button>
-        <button class="ghost" @click="cancelCreate">取消</button>
+        <button class="primary" :disabled="!newTitle.trim()" @click="create">
+          {{ t('library.picker.createAndMove') }}
+        </button>
+        <button class="ghost" @click="cancelCreate">{{ t('common.cancel') }}</button>
       </div>
     </div>
   </div>
@@ -48,6 +50,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import type { Book, Collection } from '../../../shared/types'
+import { t, tp } from '../../i18n'
 
 const props = defineProps<{ book: Book; collections: Collection[]; books: Book[] }>()
 const emit = defineEmits<{

@@ -35,15 +35,16 @@
       <circle cx="28" cy="46" r="1.8" fill="currentColor" opacity="0.25" />
     </svg>
 
-    <p class="empty-title">还没有阅读记录</p>
-    <p class="empty-sub">打开一本书，阅读时长会自动记录在这里</p>
-    <button class="primary" @click="router.push('/')">去书架看看</button>
+    <p class="empty-title">{{ t('stats.empty.title') }}</p>
+    <p class="empty-sub">{{ t('stats.empty.sub') }}</p>
+    <button class="primary" @click="router.push('/')">{{ t('stats.empty.action') }}</button>
   </div>
 </template>
 
 <script setup lang="ts">
 // 统计页空态：无任何阅读数据时的引导
 import { useRouter } from 'vue-router'
+import { t } from '../../i18n'
 
 const router = useRouter()
 </script>
