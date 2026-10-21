@@ -6,6 +6,8 @@
 
 导入 · 合集 · 沉浸阅读 · 断点续读 —— 你的漫画收藏，只属于你自己的电脑
 
+[中文](./readme.md) · [English](./readme.en.md) · [日本語](./readme.ja.md)
+
 [![Electron](https://img.shields.io/badge/Electron-42-47848F?style=flat-square&logo=electron&logoColor=white)](https://www.electronjs.org/)
 [![Vue](https://img.shields.io/badge/Vue-3-4FC08D?style=flat-square&logo=vuedotjs&logoColor=white)](https://vuejs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5-3178C6?style=flat-square&logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
@@ -25,9 +27,11 @@
 
 - 📴 **纯离线** — 零网络请求（设置页手动「检查更新」为唯一例外），书籍、封面与进度全部存于本机；`ireader://` 自定义协议按 id 分发文件，不暴露本地路径
 - 📚 **多格式支持** — 导入 PDF、EPUB 与 CBZ / ZIP 漫画包三种格式，共用文库、合集与断点续读；PDF 走 pdf.js canvas 渲染管线，EPUB 走 epub.js 分页排版（图片型漫画书双页并排，文字型书流式分页），CBZ / ZIP 由主进程按需解压、逐页供给图片并复用 PDF 全套翻页管线；同一套阅读偏好与快捷键
+- 🌐 **三语界面** — 设置 → 通用 → 语言支持跟随系统 / 中文 / English / 日本語；切换即时生效、重启保持，日期、时长、复数与书名排序同步适配当前语言
 - 📖 **沉浸阅读** — 单页 / 双页排版，日漫（右→左）与韩漫（左→右）两种方向，canvas 自绘的仿真纸张卷曲翻页动画；纯黑视口贴满屏幕，顶底栏靠近边缘唤出、自动隐藏；适宽等长页支持滚轮连续滚动，贴边即翻页
 - 🔖 **断点续读** — 每本书独立记录页码、阅读模式、方向与缩放，重新打开即回到上次离开的位置
 - 🗂️ **合集管理** — 按系列收纳漫画，一本书同一时刻只属于一个合集；集内可直接导入，从主页模糊搜索 + 全选添加
+- 📊 **阅读统计** — 总时长、今日阅读、连续天数一览，近 7 / 30 天柱状图与书籍排行；时长自动累计，排行支持今日 / 总计切换
 - ⚡ **流畅渲染** — 离屏 canvas 渲染 + LRU 位图缓存，缓存命中毫秒级上屏；滑块跨页拖动零渲染开销，后台预取前后页组
 
 ## 🖼 界面预览
@@ -50,7 +54,7 @@
     </td>
     <td width="50%" align="center">
       <img src="pics/设置.webp" alt="设置" /><br/>
-      <sub><b>设置</b> —— 阅读偏好与外观，主题支持浅色 / 深色 / 跟随系统</sub>
+      <sub><b>设置</b> —— 界面语言、阅读偏好与外观，主题支持浅色 / 深色 / 跟随系统</sub>
     </td>
   </tr>
 </table>
@@ -116,10 +120,19 @@
 - **CBZ 阅读**：压缩包内图片按文件名自然排序逐页浏览（1 → 2 → 10，兼容零填充）；导入即统计页数、首页自动作封面；复用 PDF 的页组 / 缓存 / 动画全套管线
 - **性能保护**：滑块跨多页拖动零渲染开销（松手后并行渲染双页），作废渲染循环的迟到结果只入缓存不上屏
 
+#### 阅读统计
+
+- 入口：设置 → 数据 → 阅读时间统计
+- 概览：总阅读时长、今日阅读（附昨日对比）、连续阅读天数
+- 近 7 / 30 天每日柱状图，一次拉取、切换不重复请求
+- 书籍排行：今日 / 总计两种口径，显示时长、占比条与最近阅读时间
+- 计时：在阅读页每 30 秒结算一次，页面隐藏、窗口失焦或加载失败时自动暂停，跨天自动切分归属日期
+
 #### 设置
 
 | 设置项 | 取值 | 默认 |
 | --- | --- | --- |
+| 界面语言 | 跟随系统 / 中文 / English / 日本語 | 跟随系统 |
 | 默认阅读模式 | 单页 / 双页 | 单页 |
 | 默认阅读方向 | LTR / RTL | RTL |
 | 主题 | 浅色 / 深色 / 跟随系统 | 跟随系统 |
@@ -128,7 +141,7 @@
 
 单本书的进度记录优先于全局默认。
 
-设置页「关于」分组还提供当前版本查看与检查更新（Windows 增量更新，macOS 跳转浏览器下载）。
+设置页「数据」分组提供阅读统计入口；「关于」分组还提供当前版本查看与检查更新（Windows 增量更新，macOS 跳转浏览器下载）。
 
 </details>
 
@@ -142,8 +155,9 @@
 | EPUB 渲染 | epubjs 0.3.x（渲染进程解包 → 分页排版；图片型书自适应缩放） |
 | CBZ 渲染 | yauzl 3.x（主进程按需解压 zip 内图片，经 ireader://cbz/{id}/{page} 逐页供给） |
 | 数据库 | better-sqlite3 12.x（主进程内嵌 SQLite，WAL 模式） |
+| 界面语言 | 自研零依赖 i18n，三语词典类型同构；Intl 处理日期、时长与复数，Intl.Collator 排序 |
 | 打包 | electron-builder 26（macOS DMG / Windows NSIS） |
-| 测试 | Vitest 1.x（页组划分、封面队列、CBZ 排序与尺寸、滚轮滚动状态机等纯逻辑，132 个用例） |
+| 测试 | Vitest 1.x（页组划分、封面队列、CBZ 排序与尺寸、滚轮滚动状态机、i18n 与排序等纯逻辑，218 个用例） |
 
 ## 🧭 架构
 
@@ -151,10 +165,11 @@ Electron 双进程，前后端分离：
 
 ```
 渲染进程（Vue 3 SPA）
-  文库 / 阅读器 / 设置 三路由
+  文库 / 阅读器 / 设置 / 阅读统计 四路由
   PDF：pdf.js worker → 离屏 canvas → LRU 缓存 → 上屏
   EPUB：epub.js 解包 → 分页渲染（图片型书按 spine 页模型）
   CBZ：逐页拉取压缩包内图片（主进程按需解压）→ 同 PDF canvas 管线
+  i18n：三语词典 + Intl 格式化，locale 变更驱动全站重渲染
         ▲ IPC（contextBridge 类型安全 API，contextIsolation + sandbox）
 主进程（Node.js）
   文库 / 合集 / 进度 / 设置服务，封面落盘，日志
@@ -166,6 +181,7 @@ Electron 双进程，前后端分离：
 ```
 ├── electron/          # 主进程：main / preload / db(repos+迁移) / services / ipc
 ├── src/               # 渲染进程：views / stores / services(pdf·epub·pageCache·pageCurl·spread) / components
+├── src/i18n/          # 三语词典、时长/日期格式化与错误码映射
 ├── shared/types.ts    # 前后端共享类型（Book / Collection / Settings / Result…）
 ├── pics/              # 界面截图
 └── build/             # 打包资源（icon 等）
@@ -179,9 +195,10 @@ Electron 双进程，前后端分离：
 - `books`：书名、格式（由扩展名派生）、规范化路径（唯一）、页数、封面路径、添加 / 最近阅读时间、`collection_id`（NULL = 未分组）
 - `collections`：合集（id、标题、创建时间）
 - `reading_progress`：每本书一条（页码、模式、方向、缩放、cfi/percentage（EPUB 定位），变更防抖 1s 保存，退出强制落盘）
+- `reading_stats`：阅读时长日粒度聚合（每本书每天一行，毫秒累加；删书级联清除）
 - `settings`：key-value（JSON）
 
-迁移用 `PRAGMA user_version` 版本号 + 顺序脚本（当前 v3：合集表与书籍归属列、阅读进度 cfi/percentage 列），只追加不回改。
+迁移用 `PRAGMA user_version` 版本号 + 顺序脚本（当前 v4：合集归属、进度 cfi/percentage、阅读时长统计），只追加不回改。
 
 </details>
 
