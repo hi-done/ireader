@@ -32,7 +32,20 @@
         <span class="count-badge cover-badge">{{ bookCount }} 本</span>
       </div>
     </div>
-    <div class="title" :title="collection.title">{{ collection.title }}</div>
+    <!-- 书名行：hover 触发上方提示框（合集无阅读进度）；
+         .title 的 overflow:hidden 只影响自身，浮层由 CardTip 渲染到 body -->
+    <div class="card-title-row" @pointerenter="openTitleTip" @pointerleave="closeTip">
+      <div class="title">{{ collection.title }}</div>
+    </div>
+    <CardTip
+      :visible="tipAnchor !== null"
+      :anchor="tipAnchor"
+      :text="tipText"
+      placement="above"
+      align="center"
+      :max-width="tipMaxWidth"
+      @dismiss="closeTip"
+    />
   </div>
 </template>
 
@@ -40,9 +53,11 @@
 // 文库合集卡片：封面 = 集内名称升序第一本，右侧纸页缘隐喻"一叠多本"；
 // 卡壳与 3D 倾斜由全局 .tilt-card 承载
 // 对应设计文档 specs/图书卡片交互与图标苹果风美化设计方案-20261021.md §5.3
+// 书名提示走 CardTip 浮层，见 specs/图书卡片提示框苹果风美化设计方案-20261021.md §5.6
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import type { Book, Collection } from '../../../shared/types'
 import { attachCardTilt, type CardTiltHandle } from '../../services/cardTilt'
+import CardTip from '../ui/CardTip.vue'
 
 const props = defineProps<{ collection: Collection; books: Book[] }>()
 defineEmits<{ open: [collectionId: number] }>()
@@ -53,6 +68,23 @@ const coverBook = computed(
     [...props.books].sort((a, b) => a.title.localeCompare(b.title, 'zh-Hans-CN'))[0] ?? null
 )
 const bookCount = computed(() => props.books.length)
+
+// —— 书名提示：浮层 Teleport 到 body，避开卡片 3D 倾斜造成的文字重采样 ——
+const tipAnchor = ref<HTMLElement | null>(null)
+const tipText = ref('')
+const tipMaxWidth = ref<number | undefined>()
+
+function openTitleTip(event: PointerEvent) {
+  if (event.pointerType === 'touch') return
+  const el = event.currentTarget as HTMLElement
+  tipAnchor.value = el
+  tipText.value = props.collection.title
+  tipMaxWidth.value = el.offsetWidth
+}
+
+function closeTip() {
+  tipAnchor.value = null
+}
 
 // —— 3D 倾斜跟随：与书卡片同一套接线，减弱动效 / 触屏下 attach 返回空句柄 ——
 const cardEl = ref<HTMLElement | null>(null)

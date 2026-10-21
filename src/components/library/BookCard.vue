@@ -45,8 +45,14 @@
       </span>
 
       <!-- 阅读进度圆环：悬浮在封面右上角，hover 时让位给操作按钮；
-           无进度的卡片不渲染，封面高度不变，卡片尺寸保持一致 -->
-      <div v-if="progressPercent !== null" class="progress-ring" title="阅读进度">
+           无进度的卡片不渲染，封面高度不变，卡片尺寸保持一致。
+           进度文本并入书名提示框，此处只保留读屏语义 -->
+      <div
+        v-if="progressPercent !== null"
+        class="progress-ring"
+        role="img"
+        :aria-label="`阅读进度 ${progressPercent}%`"
+      >
         <svg viewBox="0 0 36 36">
           <circle class="ring-bg" cx="18" cy="18" r="15.5" />
           <circle
@@ -61,10 +67,22 @@
         <span class="ring-text">{{ progressPercent }}<i>%</i></span>
       </div>
     </div>
-    <div class="title" :title="book.title">{{ book.title }}</div>
+    <!-- 书名行：hover 触发上方提示框（书名 + 阅读进度两行）；
+         .title 的 overflow:hidden 只影响自身，浮层由 CardTip 渲染到 body -->
+    <div class="card-title-row" @pointerenter="openTitleTip" @pointerleave="closeTip">
+      <div class="title">{{ book.title }}</div>
+    </div>
     <div class="card-actions">
       <!-- 三个操作按钮统一为 SF Symbols 风格描边图标 + 毛玻璃圆钮 -->
-      <button class="action-btn move-btn" title="移入合集" @click.stop="$emit('move', book.id)">
+      <button
+        class="action-btn move-btn"
+        :aria-label="MOVE_LABEL"
+        @click.stop="$emit('move', book.id)"
+        @pointerenter="openActionTip($event, MOVE_LABEL, 'center')"
+        @pointerleave="closeTip"
+        @focus="openActionTip($event, MOVE_LABEL, 'center')"
+        @blur="closeTip"
+      >
         <svg
           width="13"
           height="13"
@@ -81,7 +99,15 @@
           />
         </svg>
       </button>
-      <button class="action-btn rename-btn" title="重命名" @click.stop="$emit('rename', book.id)">
+      <button
+        class="action-btn rename-btn"
+        :aria-label="RENAME_LABEL"
+        @click.stop="$emit('rename', book.id)"
+        @pointerenter="openActionTip($event, RENAME_LABEL, 'center')"
+        @pointerleave="closeTip"
+        @focus="openActionTip($event, RENAME_LABEL, 'center')"
+        @blur="closeTip"
+      >
         <svg
           width="13"
           height="13"
@@ -99,8 +125,12 @@
       </button>
       <button
         class="action-btn remove-btn"
-        :title="removeLabel"
+        :aria-label="removeLabel"
         @click.stop="$emit('remove', book.id)"
+        @pointerenter="openActionTip($event, removeLabel, 'right')"
+        @pointerleave="closeTip"
+        @focus="openActionTip($event, removeLabel, 'right')"
+        @blur="closeTip"
       >
         <svg
           width="13"
@@ -116,21 +146,39 @@
         </svg>
       </button>
     </div>
+    <!-- 唯一的提示框实例：5 个触发源共用，同一时刻最多一个 -->
+    <CardTip
+      :visible="tipAnchor !== null"
+      :anchor="tipAnchor"
+      :text="tipText"
+      :meta="tipMeta"
+      :placement="tipPlacement"
+      :align="tipAlign"
+      :max-width="tipMaxWidth"
+      @dismiss="closeTip"
+    />
   </div>
 </template>
 
 <script setup lang="ts">
 // 文库书卡片：封面 / 进度环 / 缺失徽章 / 三个操作按钮；卡壳与 3D 倾斜由全局 .tilt-card 承载
 // 对应设计文档 specs/图书卡片交互与图标苹果风美化设计方案-20261021.md §5.2
+// 悬停提示框（按钮 / 书名）见 specs/图书卡片提示框苹果风美化设计方案-20261021.md §5.5
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import type { Book } from '../../../shared/types'
 import { attachCardTilt, type CardTiltHandle } from '../../services/cardTilt'
+import type { TipAlign, TipPlacement } from '../../services/cardTip'
+import CardTip from '../ui/CardTip.vue'
 
 const props = withDefaults(
   defineProps<{ book: Book; /** 合集视图内 × 的语义变为移出合集 */ removeLabel?: string }>(),
   { removeLabel: '从文库移除' }
 )
 defineEmits<{ open: [bookId: number]; remove: [bookId: number]; rename: [bookId: number]; move: [bookId: number] }>()
+
+/** 操作按钮文案：aria-label（读屏）与提示框文本共用，避免两处漂移 */
+const MOVE_LABEL = '移入合集'
+const RENAME_LABEL = '重命名'
 
 const progressPercent = computed(() => {
   const { progress, totalPages } = props.book
@@ -143,6 +191,52 @@ const progressPercent = computed(() => {
 
 /** 进度圆环周长（r=15.5） */
 const RING_CIRC = 2 * Math.PI * 15.5
+
+// —— 悬停提示框：浮层 Teleport 到 body，避开卡片 3D 倾斜造成的文字重采样 ——
+const tipAnchor = ref<HTMLElement | null>(null)
+const tipText = ref('')
+const tipMeta = ref('')
+const tipPlacement = ref<TipPlacement>('below')
+const tipAlign = ref<TipAlign>('center')
+const tipMaxWidth = ref<number | undefined>()
+
+/** 写入提示状态；同一时刻只允许一个浮层，直接整体覆盖 */
+function openTip(
+  anchor: HTMLElement,
+  options: { text: string; meta?: string; placement: TipPlacement; align: TipAlign; maxWidth?: number }
+) {
+  tipAnchor.value = anchor
+  tipText.value = options.text
+  tipMeta.value = options.meta ?? ''
+  tipPlacement.value = options.placement
+  tipAlign.value = options.align
+  tipMaxWidth.value = options.maxWidth
+}
+
+function closeTip() {
+  tipAnchor.value = null
+}
+
+/** 操作按钮提示：向下展开；触屏无 hover 语义，鼠标点击不产生 focus-visible，两处都要过滤 */
+function openActionTip(event: PointerEvent | FocusEvent, text: string, align: TipAlign) {
+  if (event instanceof PointerEvent && event.pointerType === 'touch') return
+  const el = event.currentTarget as HTMLElement
+  if (event.type === 'focus' && !el.matches(':focus-visible')) return
+  openTip(el, { text, placement: 'below', align })
+}
+
+/** 书名提示：向上展开，宽度锁定为书名行宽；有进度时补第二行 */
+function openTitleTip(event: PointerEvent) {
+  if (event.pointerType === 'touch') return
+  const el = event.currentTarget as HTMLElement
+  openTip(el, {
+    text: props.book.title,
+    meta: progressPercent.value !== null ? `阅读进度 ${progressPercent.value}%` : '',
+    placement: 'above',
+    align: 'center',
+    maxWidth: el.offsetWidth,
+  })
+}
 
 // —— 3D 倾斜跟随：指针位置写 CSS 变量，减弱动效 / 触屏下 attach 返回空句柄 ——
 const cardEl = ref<HTMLElement | null>(null)
