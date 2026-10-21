@@ -6,7 +6,7 @@
       <button
         class="book-nav"
         :disabled="prevBookId == null"
-        :title="t('reader.prevBookTitle')"
+        :aria-label="t('reader.prevBookTitle')"
         @click="switchBook(-1)"
       >
         {{ t('reader.prevBook') }}
@@ -14,7 +14,7 @@
       <button
         class="book-nav"
         :disabled="nextBookId == null"
-        :title="t('reader.nextBookTitle')"
+        :aria-label="t('reader.nextBookTitle')"
         @click="switchBook(1)"
       >
         {{ t('reader.nextBook') }}
@@ -31,12 +31,20 @@
           :model-value="zoomValue"
           :options="zoomOptions"
           :label="isImageLayout ? t('reader.zoom') : t('reader.fontSize')"
-          :title="isImageLayout ? t('reader.zoom') : t('reader.fontSize')"
           @change="onZoomSelect"
           @open="pinBars"
           @close="unpinBars"
+          @trigger-enter="openZoomTip"
+          @trigger-leave="closeTip"
         />
-        <button :title="t('reader.fullscreen')" @click="toggleFullscreen">⛶</button>
+        <button
+          :aria-label="t('reader.fullscreen')"
+          @click="toggleFullscreen"
+          @pointerenter="openFullscreenTip"
+          @pointerleave="closeTip"
+          @focus="openFullscreenTip"
+          @blur="closeTip"
+        >⛶</button>
       </div>
     </header>
 
@@ -79,9 +87,14 @@
         :max="Math.max(0, totalPages - 1)"
         :value="sliderIndex"
         :disabled="!store.locationsReady"
-        :title="t('reader.dragToSeek')"
+        :aria-label="t('reader.dragToSeek')"
         @input="onSlideInput"
         @change="onSlideChange"
+        @pointerenter="openSeekTip"
+        @pointerleave="closeTip"
+        @focus="openSeekTip"
+        @blur="closeTip"
+        @pointerdown="closeTip"
       />
       <button
         class="nav-btn"
@@ -91,6 +104,16 @@
         {{ t('reader.nextPage') }}
       </button>
     </footer>
+
+    <!-- 提示浮层：Teleport 到 body，顶栏毛玻璃的固定包含块不影响坐标；同一视图只挂一个实例 -->
+    <CardTip
+      :visible="tipAnchor !== null"
+      :anchor="tipAnchor"
+      :text="tipText"
+      :placement="tipPlacement"
+      :align="tipAlign"
+      @dismiss="closeTip"
+    />
   </div>
 </template>
 
@@ -105,6 +128,8 @@ import { getEpubDiag, pushNavDiag, waitViewsSettled } from '../services/epub'
 import { captureRegionToCanvas } from '../services/capture'
 import type { SelectOption } from '../services/selectMenu'
 import SelectMenu from '../components/ui/SelectMenu.vue'
+import CardTip from '../components/ui/CardTip.vue'
+import { useHoverTip } from '../components/ui/useHoverTip'
 import { BURST_SETTLE_MS, canReplayBurst, pickEpubAnimBudget, TurnPolicy } from '../services/turnPolicy'
 import { cancelTurnCurl, isTurnCurlActive, playTurnCurl } from '../services/turnAnimator'
 import { appLocale, t } from '../i18n'
@@ -124,6 +149,30 @@ const barsVisible = ref(false)
 let hideTimer: ReturnType<typeof setTimeout> | null = null
 /** 顶栏下拉展开期间锁定可见：鼠标在触发器上移动会反复触发 showBarsTemporarily，只清一次计时器不够 */
 let barsPinned = false
+
+// —— 顶栏 / 底栏悬停提示：复用书卡的 CardTip 浮层，浮层 Teleport 到 body 不受顶栏毛玻璃包含块影响 ——
+const { tipAnchor, tipText, tipPlacement, tipAlign, openTip, openTipAt, closeTip } = useHoverTip()
+
+/** 顶栏图标按钮提示：向下展开、水平居中（上一本 / 下一本自带文字，不做提示） */
+function openFullscreenTip(event: PointerEvent | FocusEvent) {
+  openTip(event, t('reader.fullscreen'))
+}
+
+/** 下拉触发器提示：锚点由 SelectMenu 透出；图片型 EPUB 是缩放，流式 EPUB 是字号（与 :label 同键） */
+function openZoomTip(anchor: HTMLElement) {
+  openTipAt(anchor, isImageLayout.value ? t('reader.zoom') : t('reader.fontSize'))
+}
+
+/** 底栏滑块提示：向上展开（下方是屏幕边缘），拖动开始即收起 */
+function openSeekTip(event: PointerEvent | FocusEvent) {
+  openTip(event, t('reader.dragToSeek'), { placement: 'above' })
+}
+
+// 顶栏 / 底栏淡出后控件已不可见：提示框同步收起，不悬浮在空处
+watch(barsVisible, (visible) => {
+  if (!visible) closeTip()
+})
+
 const loadError = ref('')
 const epubAreaEl = ref<HTMLElement | null>(null)
 /** 根元素 ref：pageCurl 的 container（.reader-view 已是 position: relative） */
@@ -186,6 +235,7 @@ onBeforeUnmount(() => {
   if (hideTimer) clearTimeout(hideTimer)
   openSeq++ // 作废进行中的队列消费与动画编排
   pendingDelta = 0
+  pendingJump = null
   clearBurstSession()
   unbindRenditionEvents()
   discardTurn()
@@ -212,8 +262,8 @@ async function doOpen(id: number) {
   // 跨书切换：作废进行中的队列消费与翻页编排并揭除冻结帧，避免旧书画面残留在新书阅读区
   openSeq++
   pendingDelta = 0
+  pendingJump = null
   navIndex = null
-  forceSnap = false
   policy.reset()
   clearBurstSession()
   discardTurn()
@@ -327,14 +377,17 @@ function onHotzoneClick(side: 'left' | 'right') {
 // —— 翻页动画编排：截图冻结帧遮盖 epub.js 重建过程 + 复用 pageCurl 卷曲层 ——
 // 净位移队列：输入只累加 pendingDelta，由单一消费者串行执行，连翻合并为一次到位
 let pendingDelta = 0
+/**
+ * 显式跳转目标（滑块 / Home / End）：与 pendingDelta 量纲分离（目标索引 vs 翻页次数），
+ * 优先消费且强制瞬切，避免与连翻净位移相加导致跳错页
+ */
+let pendingJump: number | null = null
 /** 进行中的队列消费（串行，杜绝导航重叠）；重入复用同一 Promise */
 let drainPromise: Promise<void> | null = null
 /** 权威页索引：由队列推演，每次导航后以 relocated 校正 */
 let navIndex: number | null = null
 /** 换书 / 尺寸变化 / 卸载时递增，旧流程在检查点退出 */
 let openSeq = 0
-/** 下一次消费强制瞬切（滑块 / Home / End 等显式跳转） */
-let forceSnap = false
 let freezeEl: HTMLCanvasElement | null = null
 /** 连续翻页判定：连翻瞬切、停手后恢复动画 */
 const policy = new TurnPolicy()
@@ -427,10 +480,11 @@ function requestJump(index: number): Promise<void> {
   // 显式跳转不补播：滑块有独立会话，Home / End 直接到位
   clearBurstSession()
   const from = navIndex ?? store.current?.index ?? 0
-  if (index !== from) {
-    forceSnap = true
-    pendingDelta = index - from
-  }
+  // 目标先夹取再对齐组首：双页模式下组内第二页也落到组首，避免 display 后配对错位
+  const target = store.alignToSpread(clampPageIndex(index))
+  // 显式跳转优先于连翻：清空未消费的翻页次数，避免两个量纲叠加跳错
+  pendingDelta = 0
+  pendingJump = target !== store.alignToSpread(from) ? target : null
   // 跳转即刻生效：揭除在播卷曲（底层已是动画终点），不等 450ms 播完
   if (isTurnCurlActive()) discardTurn()
   return drainTurns()
@@ -442,39 +496,57 @@ function drainTurns(): Promise<void> {
     const token = openSeq
     drainPromise = doDrainTurns(token).finally(() => {
       drainPromise = null
-      if (pendingDelta !== 0) void drainTurns() // 换书/尺寸抖动期间的新输入兜底，绝不丢步
+      // 换书/尺寸抖动期间的新输入兜底，绝不丢步
+      if (pendingJump !== null || pendingDelta !== 0) void drainTurns()
     })
   }
   return drainPromise
 }
 
 async function doDrainTurns(token: number): Promise<void> {
-  while (pendingDelta !== 0 && token === openSeq) {
+  while (token === openSeq && (pendingJump !== null || pendingDelta !== 0)) {
+    // 显式跳转优先：滑块 / Home / End 直接到位，瞬切且不参与连翻判定
+    if (pendingJump !== null) {
+      const target = pendingJump
+      pendingJump = null
+      const from = navIndex ?? store.current?.index ?? 0
+      const effective = target - from
+      navIndex = target
+      if (effective === 0) continue // 已在目标组：不导航、不动画
+      try {
+        await jumpToIndex(target, token)
+      } catch (e) {
+        if (token === openSeq) navIndex = store.current?.index ?? navIndex
+        console.error('[epub] 跳页失败', e)
+      }
+      continue
+    }
+
     const delta = pendingDelta
     pendingDelta = 0
-    const snapOnce = forceSnap // 逐次消费：中途的新输入不再继承强制瞬切
-    forceSnap = false
     const from = navIndex ?? store.current?.index ?? 0
-    const target = clampPageIndex(from + delta)
+    // 图片型双页按跨页组推演，其余按页推演（store 内部夹取到有效范围）
+    const target = store.turnTarget(from, delta)
     const effective = target - from
     navIndex = target
-    if (effective === 0) continue // 首/尾页：不导航、不动画
+    if (effective === 0) continue // 首/尾：不导航、不动画
+    pushNavDiag(`[spread] turn from=${from} delta=${delta} target=${target}`)
 
-    const decision = snapOnce
-      ? { mode: 'snap' as const, burst: false }
-      : policy.decide({
-          now: performance.now(),
-          isPageTurn: true,
-          indexDelta: effective,
-          animating: isTurnCurlActive(),
-          reducedMotion,
-          dragging: sliderDragging,
-        })
-    if (decision.mode === 'animate' && Math.abs(effective) === 1) {
+    const decision = policy.decide({
+      now: performance.now(),
+      isPageTurn: true,
+      // 动画判定用翻页次数：双页一次翻页的 section 位移是 2，
+      // 沿用 effective 会被误判为连翻、单次翻页永远瞬切
+      indexDelta: delta,
+      animating: isTurnCurlActive(),
+      reducedMotion,
+      dragging: sliderDragging,
+    })
+    if (decision.mode === 'animate' && Math.abs(delta) === 1) {
       // 恢复正常单次翻页：上一段连翻序列已结束，残留会话不得跨段生效
       clearBurstSession()
       try {
-        await animatedTurn(effective, token)
+        await animatedTurn(delta, token)
       } catch (e) {
         // 单轮动画/导航异常不拖垮队列：清理覆盖层并以引擎实际落点校正后继续消费
         discardTurn()
@@ -484,9 +556,9 @@ async function doDrainTurns(token: number): Promise<void> {
     } else {
       discardTurn()
       // 连翻首帧：记录起点并异步截取起点画面（与跳页并行，不阻塞连翻）
-      if (decision.burst && !snapOnce) beginBurstSession(from)
+      if (decision.burst) beginBurstSession(from)
       try {
-        await jumpTo(target, effective, token)
+        await jumpTo(target, delta, token)
       } catch (e) {
         if (token === openSeq) navIndex = store.current?.index ?? navIndex
         console.error('[epub] 跳页失败', e)
@@ -522,8 +594,15 @@ function scheduleBurstSettle(token: number): void {
       clearBurstSession()
       return
     }
-    // 仍在连翻 / 拖动：本次不补，等最后一轮消费重新计时
-    if (pendingDelta !== 0 || drainPromise !== null || isTurnCurlActive() || sliderDragging) return
+    // 仍在连翻 / 拖动 / 跳转排队：本次不补，等最后一轮消费重新计时
+    if (
+      pendingJump !== null ||
+      pendingDelta !== 0 ||
+      drainPromise !== null ||
+      isTurnCurlActive() ||
+      sliderDragging
+    )
+      return
     void finishBurstCurl()
   }, BURST_SETTLE_MS)
 }
@@ -557,7 +636,7 @@ async function finishBurstCurl(): Promise<void> {
       finalIndex,
       startCfi,
       finalCfi: store.current.cfi,
-      queueBusy: drainPromise !== null,
+      queueBusy: drainPromise !== null || pendingJump !== null,
       pendingDelta,
       curlActive: isTurnCurlActive(),
       dragging: sliderDragging,
@@ -584,11 +663,13 @@ function clearBurstSession(): void {
   burstFromPromise = null
 }
 
-/** 净位移一次到位：图片型书或 locations 就绪时直接 goTo，否则逐页回退；落点以 relocated 为准 */
+/** 净位移一次到位：图片型走组表推演，文字型 locations 就绪时 goTo；落点以 relocated 为准 */
 async function jumpTo(target: number, delta: number, token: number): Promise<void> {
   // relocated 监听须先于导航挂上：导航 Promise 早于 relocated 事件 resolve（详见 waitNextRelocated）
   const relocated = waitNextRelocated()
-  if (store.layout === 'pre-paginated' || (store.locationsReady && totalPages.value > 0)) {
+  if (store.layout === 'pre-paginated') {
+    await store.turnTo(target, delta)
+  } else if (store.locationsReady && totalPages.value > 0) {
     await store.goTo(target)
   } else {
     for (let i = 0; i < Math.abs(delta); i++) {
@@ -597,6 +678,23 @@ async function jumpTo(target: number, delta: number, token: number): Promise<voi
   }
   await relocated
   // 以引擎实际落点校正推演值（文字型 location 边界）；换书后旧流程不写新书的索引
+  if (token === openSeq) navIndex = store.current?.index ?? navIndex
+}
+
+/** 显式跳转一次到位：直接 goTo 目标组首，不播动画；落点以 relocated 为准 */
+async function jumpToIndex(target: number, token: number): Promise<void> {
+  const relocated = waitNextRelocated()
+  if (store.layout === 'pre-paginated' || (store.locationsReady && totalPages.value > 0)) {
+    await store.goTo(target)
+  } else {
+    // 文字型 locations 未就绪时无法按下标定位，按索引差逐次翻页（与旧行为一致）
+    const from = navIndex ?? store.current?.index ?? target
+    const delta = target - from
+    for (let i = 0; i < Math.abs(delta); i++) {
+      await (delta > 0 ? store.next() : store.prev())
+    }
+  }
+  await relocated
   if (token === openSeq) navIndex = store.current?.index ?? navIndex
 }
 
@@ -665,8 +763,9 @@ async function animatedTurn(delta: number, token: number): Promise<void> {
     const prevCfi = store.current?.cfi
     if (from) attachFreeze(area, from)
     const relocated = waitNextRelocated()
-    if (store.layout === 'pre-paginated' || (store.locationsReady && totalPages.value > 0)) {
-      await store.goTo(target)
+    if (store.layout === 'pre-paginated') {
+      // 双页单步交给直通 next/prev（配对由 epubjs 负责）；单页走 goTo
+      await store.turnTo(target, delta)
     } else {
       await (delta > 0 ? store.next() : store.prev())
     }
@@ -799,7 +898,7 @@ function onSlideInput(e: Event) {
     // 拖动即作废在飞动画，并以当前页为基准重建队列推演（避免继承连翻期间的净位移）
     discardTurn()
     pendingDelta = 0
-    forceSnap = false
+    pendingJump = null
     navIndex = store.current?.index ?? slideStartIndex
     const area = epubAreaEl.value
     if (area && !reducedMotion) {
@@ -841,10 +940,18 @@ async function finishSlideCurl(finalIndex: number): Promise<void> {
   slideStartCfi = null
   slideFromPromise = null
   const token = openSeq
+  // 双页模式落点对齐组首：滑块原始索引可能落在组内第二页
+  const finalTarget = store.alignToSpread(clampPageIndex(finalIndex))
   await requestJump(finalIndex) // 串行：与在飞导航合并，最终页上屏后才补播
   if (reducedMotion || !store.ready || startIndex == null || !fromPromise || token !== openSeq) return
   // 期间又来了新的翻页/跳页或已有卷曲在播：不再补播，避免用旧快照盖住新页面
-  if (drainPromise !== null || pendingDelta !== 0 || navIndex !== finalIndex || isTurnCurlActive()) {
+  if (
+    drainPromise !== null ||
+    pendingDelta !== 0 ||
+    pendingJump !== null ||
+    navIndex !== finalTarget ||
+    isTurnCurlActive()
+  ) {
     return
   }
   const from = await fromPromise
@@ -856,7 +963,7 @@ async function finishSlideCurl(finalIndex: number): Promise<void> {
     pushNavDiag('[curl] slide no-move skip')
     return
   }
-  const dir: 'forward' | 'back' = finalIndex > startIndex ? 'forward' : 'back'
+  const dir: 'forward' | 'back' = finalTarget > store.alignToSpread(startIndex) ? 'forward' : 'back'
   const fromRight = (dir === 'forward') === (store.direction === 'ltr') // 同 PDF
   pushNavDiag(`[curl] slide play ${dir}`)
   // 补播卷曲归单例管理：期间的新翻页会揭除它并让队列继续消费
@@ -916,7 +1023,7 @@ function onResize() {
     // 尺寸变化令进行中的翻页编排失效（截图/冻结帧按旧尺寸）：作废队列消费并揭除冻结帧
     openSeq++
     pendingDelta = 0
-    forceSnap = false
+    pendingJump = null
     clearBurstSession()
     discardTurn()
     navIndex = store.current?.index ?? null

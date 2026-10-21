@@ -23,6 +23,12 @@ import {
   type EpubRendition,
   type EpubSpread,
 } from '../services/epub'
+import {
+  alignPrePaginatedPage,
+  buildPrePaginatedSpreads,
+  stepPrePaginatedPage,
+  type EpubSpineItem,
+} from '../services/epubSpread'
 import { useSettingsStore } from './settings'
 
 let saveTimer: ReturnType<typeof setTimeout> | null = null
@@ -55,6 +61,12 @@ export const useEpubReaderStore = defineStore('epubReader', () => {
   const zoom = ref(100)
   /** 总页数（响应式）：图片型书 = spine section 数；文字型书 = locations 长度（就绪后） */
   const totalPages = ref(0)
+  /**
+   * 跨页组表：仅图片型书构建（open 时一次性生成）。
+   * 双页一屏实际覆盖两个 spine section，翻页/定位都必须按组而不是按 section 推演，
+   * 否则会把当前右页翻成左页（视觉只翻一页）。
+   */
+  let preSpreads: number[][] = []
 
   function onRelocated(location: EpubLocation) {
     applyStart(location.start)
@@ -127,6 +139,8 @@ export const useEpubReaderStore = defineStore('epubReader', () => {
       zoom: zoom.value,
     })
     rendition = r
+    // 组表只依赖 spine 元数据与封面设置，在首次 display 前建好供定位对齐使用
+    rebuildPreSpreads(settingsStore.settings.coverSinglePage)
     r.on('relocated', onRelocated)
     // DEV 导航插桩：包装 manager.next/prev 记录内部状态快照（等 started 后安装）
     void instrumentNavigation(r)
@@ -148,16 +162,21 @@ export const useEpubReaderStore = defineStore('epubReader', () => {
       )
     }
 
-    if (progress?.cfi) {
-      await r.display(progress.cfi)
-    } else if (detectedLayout === 'pre-paginated') {
-      // 图片型书：locations 为空（文本分块对图片页无效），按百分比换算 spine 页索引
+    if (detectedLayout === 'pre-paginated') {
+      // 图片型书：CFI 可能落在组内第二页（重开时配对错位），locations 对图片页也无效。
+      // 统一按 page / 百分比还原 spine 索引，再对齐到跨页组首页
       const total = spinePageCount()
-      const index =
-        progress?.percentage != null
-          ? Math.min(total - 1, Math.max(0, Math.floor((progress.percentage / 100) * total)))
-          : 0
-      await r.display(b.spine.get(index)?.href ?? undefined)
+      let index = 0
+      if (progress?.page != null) index = progress.page - 1
+      else if (progress?.percentage != null) index = Math.floor((progress.percentage / 100) * total)
+      const bounded = Math.min(Math.max(index, 0), Math.max(0, total - 1))
+      const aligned = alignToSpread(bounded)
+      pushNavDiag(
+        `[spread] open page=${progress?.page ?? 'none'} align=${aligned} groups=${preSpreads.length}`
+      )
+      await r.display(b.spine.get(aligned)?.href ?? undefined)
+    } else if (progress?.cfi) {
+      await r.display(progress.cfi)
     } else if (progress?.percentage != null) {
       await r.display(progress.percentage / 100)
     } else {
@@ -207,6 +226,37 @@ export const useEpubReaderStore = defineStore('epubReader', () => {
     return count
   }
 
+  /**
+   * 构建图片型书的跨页组表（open 时调用一次）。
+   * 单/双页切换、缩放重渲染复用同一份；非图片型书清空退化为按页步进。
+   */
+  function rebuildPreSpreads(coverSinglePage: boolean): void {
+    preSpreads = []
+    if (!book || layout.value !== 'pre-paginated') return
+    const items: EpubSpineItem[] = []
+    for (let i = 0; ; i++) {
+      const section = book.spine.get(i)
+      if (!section) break
+      items.push({
+        index: i,
+        properties: section.properties ?? [],
+        linear: section.linear,
+      })
+    }
+    preSpreads = buildPrePaginatedSpreads(items, coverSinglePage)
+  }
+
+  /** 图片型 + 双页 + 组表可用：跨页组语义生效 */
+  function isDoubleImageLayout(): boolean {
+    return layout.value === 'pre-paginated' && spread.value === 'always' && preSpreads.length > 0
+  }
+
+  /** 对齐到跨页组首页；非双页图片型 / 组表为空时原样返回 */
+  function alignToSpread(index: number): number {
+    if (!isDoubleImageLayout()) return index
+    return alignPrePaginatedPage(preSpreads, index)
+  }
+
   /** 供视图绑定 rendition 级事件（iframe 内键盘/滚轮），不入响应式 */
   function getRendition(): EpubRendition | null {
     return rendition
@@ -253,8 +303,13 @@ export const useEpubReaderStore = defineStore('epubReader', () => {
   function goTo(index: number): Promise<void> {
     if (!book || !rendition) return Promise.resolve()
     if (layout.value === 'pre-paginated') {
-      // 图片型书：页 = spine section，直接按 href 定位（locations 对图片页无效）
-      const section = book.spine.get(index)
+      // 图片型书：页 = spine section，直接按 href 定位（locations 对图片页无效）。
+      // 先夹取再对齐组首：display 从组内第二页开始会渲染成 [第二页, 下一页]，配对错位
+      const total = spinePageCount()
+      const bounded = Math.min(Math.max(index, 0), Math.max(0, total - 1))
+      const aligned = alignToSpread(bounded)
+      pushNavDiag(`[spread] goTo index=${index} align=${aligned} groups=${preSpreads.length}`)
+      const section = book.spine.get(aligned)
       if (section) {
         return rendition.display(section.href).catch((e) => console.error('[epub] 跳页失败', e))
       }
@@ -263,6 +318,35 @@ export const useEpubReaderStore = defineStore('epubReader', () => {
     return displayPageIndex(book, rendition, index).catch((e) =>
       console.error('[epub] 跳页失败', e)
     )
+  }
+
+  /**
+   * 翻页推演：图片型双页按跨页组步进，其余按页步进。
+   * 图片型用 spine 数、文字型用 locations 数夹取；总数未知时只保证非负，边界交给 epub.js。
+   */
+  function turnTarget(from: number, delta: number): number {
+    if (isDoubleImageLayout()) return stepPrePaginatedPage(preSpreads, from, delta)
+    const total = layout.value === 'pre-paginated' ? spinePageCount() : totalPages.value
+    if (total <= 0) return Math.max(0, from + delta)
+    return Math.min(Math.max(from + delta, 0), total - 1)
+  }
+
+  /**
+   * 执行一次翻页。图片型双页的单步交给引擎直通 next/prev（配对规则由 epubjs 负责，
+   * 与组表一致）；连翻/单页走 goTo 一次到位；文字型保持逐次 next/prev 以匹配 CFI 分页。
+   */
+  async function turnTo(target: number, delta: number): Promise<void> {
+    if (layout.value === 'pre-paginated') {
+      if (spread.value === 'always' && Math.abs(delta) === 1) {
+        await (delta > 0 ? next() : prev())
+        return
+      }
+      await goTo(target)
+      return
+    }
+    for (let i = 0; i < Math.abs(delta); i++) {
+      await (delta > 0 ? next() : prev())
+    }
   }
 
   /** 切换单页/双页（epub.js 会按新 spread 自动重排分页） */
@@ -277,7 +361,7 @@ export const useEpubReaderStore = defineStore('epubReader', () => {
     // 否则切双页后仍停留在旧单页视图上
     const target =
       layout.value === 'pre-paginated'
-        ? book?.spine.get(current.value?.index ?? 0)?.href
+        ? book?.spine.get(alignToSpread(current.value?.index ?? 0))?.href
         : current.value?.cfi
     r.clear()
     if (target) void r.display(target).catch((e) => console.error('[epub] 切换双页失败', e))
@@ -309,7 +393,7 @@ export const useEpubReaderStore = defineStore('epubReader', () => {
     const next = Math.min(300, Math.max(50, Math.round(percent / 10) * 10))
     if (next === zoom.value) return
     zoom.value = next
-    const target = book?.spine.get(current.value?.index ?? 0)?.href
+    const target = book?.spine.get(alignToSpread(current.value?.index ?? 0))?.href
     if (target) void rendition?.display(target).catch((e) => console.error('[epub] 缩放重渲染失败', e))
     scheduleSave()
   }
@@ -351,6 +435,7 @@ export const useEpubReaderStore = defineStore('epubReader', () => {
     book = null
     bookId.value = null
     current.value = null
+    preSpreads = []
     atEnd.value = false
     ready.value = false
     locationsReady.value = false
@@ -375,6 +460,10 @@ export const useEpubReaderStore = defineStore('epubReader', () => {
     next,
     prev,
     goTo,
+    isDoubleImageLayout,
+    alignToSpread,
+    turnTarget,
+    turnTo,
     toggleSpread,
     toggleDirection,
     setFontSize,

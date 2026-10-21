@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { resolveTipPosition } from './cardTip'
+import { resolveTipPosition, shouldShowTip } from './cardTip'
 
 // 26px 的圆钮、68×28 的浮层，均按视口坐标
 const ANCHOR = { top: 100, left: 100, width: 26, height: 26 }
@@ -51,5 +51,31 @@ describe('resolveTipPosition - 视口钳制', () => {
 
   it('浮层宽于视口时退回左边距', () => {
     expect(resolveTipPosition({ ...BASE, viewportWidth: 60 }).left).toBe(8)
+  })
+})
+
+describe('shouldShowTip - 触发过滤', () => {
+  it('鼠标指针进入时触发', () => {
+    expect(shouldShowTip({ type: 'pointerenter', pointerType: 'mouse' })).toBe(true)
+  })
+
+  it('触屏指针进入时不触发', () => {
+    expect(shouldShowTip({ type: 'pointerenter', pointerType: 'touch' })).toBe(false)
+  })
+
+  it('键盘聚焦（focus-visible）时触发', () => {
+    expect(shouldShowTip({ type: 'focus', focusVisible: true })).toBe(true)
+  })
+
+  it('鼠标点击产生的聚焦不触发', () => {
+    expect(shouldShowTip({ type: 'focus', focusVisible: false })).toBe(false)
+  })
+
+  it('指针事件不依赖 focusVisible', () => {
+    expect(shouldShowTip({ type: 'pointerenter', pointerType: 'pen' })).toBe(true)
+  })
+
+  it('pointerType 缺省时按可触发处理', () => {
+    expect(shouldShowTip({ type: 'pointerenter' })).toBe(true)
   })
 })

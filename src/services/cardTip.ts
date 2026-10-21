@@ -1,5 +1,6 @@
-// 卡片悬停提示框定位：锚点矩形 + 浮层尺寸 → fixed 坐标（纯函数，无 DOM 依赖）
-// 对应设计文档 specs/图书卡片提示框苹果风美化设计方案-20261021.md §5.2
+// 悬停提示框定位与触发过滤：锚点矩形 + 浮层尺寸 → fixed 坐标（纯函数，无 DOM 依赖）
+// 书卡与阅读器工具栏共用；对应设计文档 specs/图书卡片提示框苹果风美化设计方案-20261021.md §5.2
+// 与 specs/阅读器工具栏提示框苹果风美化设计方案-20261021.md §5.1
 
 /** 浮层相对锚点的展开方向 */
 export type TipPlacement = 'above' | 'below'
@@ -58,4 +59,21 @@ export function resolveTipPosition(input: TipPositionInput): TipPosition {
 function clamp(value: number, min: number, max: number): number {
   if (max < min) return min
   return Math.min(Math.max(value, min), max)
+}
+
+/** 提示触发过滤的输入：从事件与元素状态中提取，便于 Node 环境单测 */
+export interface TipTriggerInput {
+  /** 事件类型（pointerenter / focus） */
+  type: string
+  /** PointerEvent.pointerType；非指针事件为空 */
+  pointerType?: string
+  /** 事件元素是否匹配 :focus-visible（仅 focus 事件有意义） */
+  focusVisible?: boolean
+}
+
+/** 是否应触发提示：触屏无 hover 语义；鼠标点击产生的 focus 不匹配 :focus-visible */
+export function shouldShowTip(input: TipTriggerInput): boolean {
+  if (input.pointerType === 'touch') return false
+  if (input.type === 'focus' && !input.focusVisible) return false
+  return true
 }

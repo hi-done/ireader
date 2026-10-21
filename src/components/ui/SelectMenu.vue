@@ -10,10 +10,13 @@
       :aria-controls="listId"
       :aria-activedescendant="activeDescendant"
       :aria-label="t('common.labelValue', { label, value: selectedLabel })"
-      :title="title"
       :disabled="disabled"
       @click="toggle"
       @keydown="onTriggerKeydown"
+      @pointerenter="onTriggerEnter"
+      @pointerleave="onTriggerLeave"
+      @focus="onTriggerEnter"
+      @blur="onTriggerLeave"
     >
       <span class="select-value">{{ selectedLabel }}</span>
       <!-- macOS 弹出按钮的 chevron.up.chevron.down 双箭头 -->
@@ -94,14 +97,13 @@ import {
   resolveMenuPlacement,
   type SelectOption,
 } from '../../services/selectMenu'
+import { shouldShowTip } from '../../services/cardTip'
 
 const props = defineProps<{
   modelValue: T
   options: SelectOption<T>[]
   /** 读屏名称：行内可见标签不属于按钮文本，需显式提供 */
   label: string
-  /** 原生 title 提示（阅读页顶栏沿用「缩放 / 字号」悬停说明） */
-  title?: string
   disabled?: boolean
 }>()
 
@@ -111,6 +113,10 @@ const emit = defineEmits<{
   /** 展开 / 收起：宿主可据此暂停自动隐藏工具栏等定时逻辑 */
   open: []
   close: []
+  /** 触发器悬停 / 聚焦：透出锚点元素，宿主据此展示自定义提示框 */
+  'trigger-enter': [anchor: HTMLElement]
+  /** 触发器移出 / 失焦 / 菜单展开：宿主收起提示框 */
+  'trigger-leave': []
 }>()
 
 /** 触发器与弹层间距 */
@@ -147,6 +153,8 @@ function toggle() {
 
 async function openMenu() {
   if (props.disabled || !props.options.length) return
+  // 下拉弹层紧贴触发器下方（gap 6px），提示框必须立即收起，避免两者叠在一起
+  emit('trigger-leave')
   activeIndex.value = initialActiveIndex(props.options, props.modelValue)
   open.value = true
   emit('open')
@@ -169,6 +177,25 @@ function close(restoreFocus = false) {
   removeListeners()
   emit('close')
   if (restoreFocus) triggerEl.value?.focus()
+}
+
+function onTriggerLeave() {
+  emit('trigger-leave')
+}
+
+/**
+ * 触发器悬停 / 聚焦：菜单展开中或不可见焦点不上报。
+ * 触屏由 shouldShowTip 过滤；透传元素而不是事件对象，避免宿主依赖原生派发的 currentTarget 时序。
+ */
+function onTriggerEnter(event: PointerEvent | FocusEvent) {
+  const trigger = triggerEl.value
+  if (open.value || !trigger) return
+  const visible = shouldShowTip({
+    type: event.type,
+    pointerType: event instanceof PointerEvent ? event.pointerType : undefined,
+    focusVisible: event.type === 'focus' ? trigger.matches(':focus-visible') : undefined,
+  })
+  if (visible) emit('trigger-enter', trigger)
 }
 
 function onDocumentPointerDown(event: PointerEvent) {

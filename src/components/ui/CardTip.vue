@@ -17,9 +17,10 @@
 </template>
 
 <script setup lang="ts">
-// 卡片悬停提示框：Teleport 到 body 用 fixed 定位，脱离 .tilt-card 的 3D 变换层，
+// 悬停提示框（书卡 / 阅读器工具栏共用）：Teleport 到 body 用 fixed 定位，脱离 .tilt-card 的 3D 变换层，
 // 避免卡片倾斜时整层重采样导致的小字号发虚
 // 对应设计文档 specs/图书卡片提示框苹果风美化设计方案-20261021.md §5.3
+// 与 specs/阅读器工具栏提示框苹果风美化设计方案-20261021.md §5.4~§5.5
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { resolveTipPosition, type TipAlign, type TipPlacement } from '../../services/cardTip'
 

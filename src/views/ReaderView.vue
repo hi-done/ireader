@@ -16,7 +16,7 @@
       <button
         class="book-nav"
         :disabled="prevBookId == null"
-        :title="t('reader.prevBookTitle')"
+        :aria-label="t('reader.prevBookTitle')"
         @click="switchBook(-1)"
       >
         {{ t('reader.prevBook') }}
@@ -24,7 +24,7 @@
       <button
         class="book-nav"
         :disabled="nextBookId == null"
-        :title="t('reader.nextBookTitle')"
+        :aria-label="t('reader.nextBookTitle')"
         @click="switchBook(1)"
       >
         {{ t('reader.nextBook') }}
@@ -41,12 +41,20 @@
           :model-value="reader.zoomMode"
           :options="ZOOM_MODE_OPTIONS"
           :label="t('reader.zoom')"
-          :title="t('reader.zoom')"
           @change="onZoomSelect"
           @open="pinBars"
           @close="unpinBars"
+          @trigger-enter="openZoomTip"
+          @trigger-leave="closeTip"
         />
-        <button :title="t('reader.fullscreen')" @click="toggleFullscreen">⛶</button>
+        <button
+          :aria-label="t('reader.fullscreen')"
+          @click="toggleFullscreen"
+          @pointerenter="openFullscreenTip"
+          @pointerleave="closeTip"
+          @focus="openFullscreenTip"
+          @blur="closeTip"
+        >⛶</button>
       </div>
     </header>
 
@@ -99,6 +107,16 @@
         {{ t('reader.nextPage') }}
       </button>
     </footer>
+
+    <!-- 提示浮层：Teleport 到 body，顶栏毛玻璃的固定包含块不影响坐标；同一视图只挂一个实例 -->
+    <CardTip
+      :visible="tipAnchor !== null"
+      :anchor="tipAnchor"
+      :text="tipText"
+      :placement="tipPlacement"
+      :align="tipAlign"
+      @dismiss="closeTip"
+    />
   </div>
 </template>
 
@@ -113,6 +131,8 @@ import { ipc } from '../services/ipc'
 import { getFromCache, putToCache, clearCache } from '../services/pageCache'
 import type { SelectOption } from '../services/selectMenu'
 import SelectMenu from '../components/ui/SelectMenu.vue'
+import CardTip from '../components/ui/CardTip.vue'
+import { useHoverTip } from '../components/ui/useHoverTip'
 import {
   cancelPageRender,
   renderPageToCanvas,
@@ -166,6 +186,25 @@ const barsVisible = ref(false)
 let hideTimer: ReturnType<typeof setTimeout> | null = null
 /** 顶栏下拉展开期间锁定可见：鼠标在触发器上移动会反复触发 showBarsTemporarily，只清一次计时器不够 */
 let barsPinned = false
+
+// —— 顶栏悬停提示：复用书卡的 CardTip 浮层，浮层 Teleport 到 body 不受顶栏毛玻璃包含块影响 ——
+const { tipAnchor, tipText, tipPlacement, tipAlign, openTip, openTipAt, closeTip } = useHoverTip()
+
+/** 顶栏图标按钮提示：向下展开、水平居中（上一本 / 下一本自带文字，不做提示） */
+function openFullscreenTip(event: PointerEvent | FocusEvent) {
+  openTip(event, t('reader.fullscreen'))
+}
+
+/** 下拉触发器提示：锚点由 SelectMenu 透出（组件内部已过滤触屏与不可见焦点） */
+function openZoomTip(anchor: HTMLElement) {
+  openTipAt(anchor, t('reader.zoom'))
+}
+
+// 顶栏淡出后按钮已不可见：提示框同步收起，不悬浮在空处
+watch(barsVisible, (visible) => {
+  if (!visible) closeTip()
+})
+
 const loadError = ref('')
 /** 与 currentDisplayPages 按索引一一对应的 canvas 引用 */
 const canvasEls = ref<(HTMLCanvasElement | null)[]>([])
