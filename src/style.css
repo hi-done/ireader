@@ -51,6 +51,10 @@
   /* 整窗背景图纱罩：盖住 bg001.jpg 保内容可读，图在纱下透出约 18% */
   --page-veil: linear-gradient(rgba(245, 245, 247, 0.82), rgba(245, 245, 247, 0.82));
   --radius: 8px;
+  /* 文库卡片：12 圆角卡片 + 8 圆角封面 + hover 提升阴影（书卡 / 合集卡共用） */
+  --card-radius: 12px;
+  --card-cover-radius: 8px;
+  --card-shadow-lift: 0 10px 24px rgba(28, 28, 26, 0.14), 0 2px 6px rgba(28, 28, 26, 0.07);
 }
 
 /* 深色主题：由 theme.ts 在 documentElement 上设置 data-theme，保持同等精致感 */
@@ -78,6 +82,8 @@
   --shadow-md: 0 1px 2px rgba(0, 0, 0, 0.25), 0 4px 14px rgba(0, 0, 0, 0.2);
   /* 深色下弹层与背景对比更弱，阴影加重一档 */
   --menu-shadow: 0 10px 30px rgba(0, 0, 0, 0.55), 0 2px 8px rgba(0, 0, 0, 0.3);
+  /* 深色底上卡片提升阴影需更重，才能与背景分离 */
+  --card-shadow-lift: 0 12px 28px rgba(0, 0, 0, 0.55), 0 2px 8px rgba(0, 0, 0, 0.35);
   --toast-bg: #2c2c2e;
   --toast-text: #f2f2f7;
   --hero-veil: linear-gradient(
@@ -232,6 +238,92 @@ button.ghost {
 button.ghost:hover:not(:disabled) {
   background-color: var(--surface-2);
   color: var(--text);
+}
+
+/* —— 文库卡片壳 + 3D 倾斜跟随（书卡 / 合集卡共用，设计文档 §4.3 / §6.1） —— */
+.tilt-card {
+  /* 倾斜角与高光中心由 cardTilt.ts 写内联变量覆盖；默认值供复位后回落 */
+  --tilt-x: 0deg;
+  --tilt-y: 0deg;
+  --glare-x: 50%;
+  --glare-y: 50%;
+  position: relative;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--card-radius);
+  box-shadow: var(--shadow-sm);
+  transform: perspective(900px) rotateX(var(--tilt-x)) rotateY(var(--tilt-y));
+  transition: transform 0.45s cubic-bezier(0.22, 0.8, 0.24, 1), box-shadow 0.25s ease;
+}
+
+/* 指针跟随期间用短过渡，避免 450ms 缓出造成的拖影 */
+.tilt-card.is-tilting {
+  transition: transform 0.08s linear, box-shadow 0.25s ease;
+  /* 只在跟随期间提升合成层，避免 N 张卡片常驻 will-change 占用显存 */
+  will-change: transform;
+}
+
+.tilt-card:hover {
+  box-shadow: var(--card-shadow-lift);
+  /* 倾斜的卡片压在相邻卡片之上（grid 子项，position: relative 已由上方提供） */
+  z-index: 1;
+}
+
+/* 按压：倾角减半 + 缩到 98%，松开回弹到 hover 态 */
+.tilt-card:active {
+  transform: perspective(900px) rotateX(calc(var(--tilt-x) * 0.5))
+    rotateY(calc(var(--tilt-y) * 0.5)) scale(0.98);
+}
+
+/* 封面高光：跟随指针的径向白光，hover 才显现（纯装饰层） */
+.cover-glare {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(
+    circle at var(--glare-x) var(--glare-y),
+    rgba(255, 255, 255, 0.32),
+    rgba(255, 255, 255, 0) 55%
+  );
+  opacity: 0;
+  transition: opacity 0.3s ease;
+}
+
+.tilt-card:hover .cover-glare {
+  opacity: 1;
+}
+
+/* 封面浮层徽章材质：深色半透明 + 模糊 + 半透明白描边（定位由各组件决定） */
+.cover-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 3px 7px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.42);
+  -webkit-backdrop-filter: blur(12px) saturate(180%);
+  backdrop-filter: blur(12px) saturate(180%);
+  color: #fff;
+  font-size: 10.5px;
+  font-weight: 500;
+  line-height: 1.3;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+/* 系统开启「减弱动态效果」：取消倾斜与按压缩放，只保留阴影过渡 */
+@media (prefers-reduced-motion: reduce) {
+  .tilt-card,
+  .tilt-card.is-tilting,
+  .tilt-card:active {
+    transition: box-shadow 0.25s ease;
+    transform: none;
+  }
 }
 
 /* —— 表单控件 —— */
