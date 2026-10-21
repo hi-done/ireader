@@ -29,7 +29,10 @@ jobs:
         run: npm test
 
   build:
-    needs: test
+    # 不 needs: test —— 打 tag 后 mac/win 立即进队，让 macOS runner 的排队时间与 test
+    # 的约 2 分钟重叠（排队才是发版耗时的大头：v1.3.0 实测 mac 任务排队 15 分钟、
+    # steps 为空、runner_id 为 0，最终被判 cancelled，而构建本身只有约 3.5 分钟）。
+    # 测试是否通过由 publish 的 needs 兜住，最多浪费一次构建，不会产出 Release
     strategy:
       fail-fast: false
       matrix:
@@ -76,30 +79,71 @@ jobs:
 
       - name: 构建安装包
         # --publish never：禁止 electron-builder 在 CI + tag 环境下自动发布（默认 onTagOrDraft，
-        # 无 GH_TOKEN 会报错）；发布统一交给下一步 action-gh-release
+        # 无 GH_TOKEN 会报错）；发布统一交给 publish 任务里的 action-gh-release
         # macOS 产物为 ad-hoc 签名（package.json mac.identity: "-"，无需证书；
         # hardenedRuntime: false 避免 ad-hoc + 库校验拒绝 Electron 预签名 framework 导致启动失败）。
         # 产物未公证：用户首次打开需在 系统设置 → 隐私与安全性 →「仍要打开」放行
         run: npm run build -- --publish never
 
-      - name: 发布到 GitHub Releases
-        uses: softprops/action-gh-release@v3
+      # 产物先作为 workflow artifact 上传，由 publish 任务统一下载后一次性发布。
+      # 不再由两个平台各自执行 action-gh-release：矩阵任务各自发布时，先完成的平台
+      # 会立刻把 Release 建出来（v1.3.0 实测 Windows 15:36 就 published，此时 macOS
+      # 还在排队），Release 呈「只有 exe、没有 dmg」的半成品状态
+      - name: 上传 macOS 产物
+        if: runner.os == 'macOS'
+        uses: actions/upload-artifact@v7
         with:
+          name: release-mac
+          # latest-mac.yml：mac 检查更新时 electron-updater 必读的平台 channel 文件
+          # （404 即报检查失败）；它由 zip target 产出，但 zip 本体与 mac blockmap 暂不
+          # 上传（mac 无证书签名走不了 Squirrel.Mac 自动更新，检查到新版本只会跳浏览器
+          # 下载，zip 无消费方）。将来加证书启用应用内更新时，再把两者补进清单
+          path: |
+            release/*/*.dmg
+            release/*/latest-mac.yml
+          if-no-files-found: error
+          # dmg 已压缩，artifact 再压一遍纯耗 CPU（官方建议大文件用 0）
+          compression-level: 0
+          retention-days: 1
+
+      - name: 上传 Windows 产物
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-win
           # latest.yml 与 blockmap 是应用内「检查更新」的元数据（electron-updater 消费），
           # 缺失则更新功能不可用（对应《软件更新功能设计方案》§9.2）
-          # latest-mac.yml：mac 检查更新时 electron-updater 必读的平台 channel 文件（404 即报检查失败）；
-          # 它由 mac 的 zip target 产出，但 zip 本体与 mac blockmap 暂不上传（mac 无证书签名
-          # 走不了 Squirrel.Mac 自动更新，检查到新版本只会跳浏览器下载，zip 无消费方）。
-          # 将来加证书启用 mac 应用内更新时，再把 zip 与 zip.blockmap 补进本清单。
-          files: |
-            release/**/*.dmg
+          path: |
             release/*/IReader-*-win.exe
             release/*/IReader-*-win.exe.blockmap
             release/*/latest.yml
-            release/*/latest-mac.yml
-          # 本步骤在 mac / win 两个 matrix 任务中各执行一次（各自上传本平台产物），
-          # generate_release_notes 仅由 Windows 任务开启：两边都开启时，第二次执行会把
-          # 同一段生成说明再次叠加进 body（实测 v1.2.0 / v1.2.1 的 Full Changelog 段重复两遍）；
-          # macOS 任务不生成说明，命中 action「已有 Release 未显式设置的信息键保留原值」的语义，
-          # 无论两个任务的完成顺序如何，body 中都只会出现一份生成说明
-          generate_release_notes: ${{ runner.os == 'Windows' }}
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 1
+
+  # 发布只在 test 与两个平台构建全部成功后执行一次：任一平台失败（含 macOS runner
+  # 排队超时被 cancelled）时 Release 不会被创建，也就不存在只挂了平台一半产物的半成品
+  publish:
+    needs: [test, build]
+    runs-on: ubuntu-latest
+    steps:
+      - name: 下载各平台产物
+        uses: actions/download-artifact@v8
+        with:
+          pattern: release-*
+          path: artifacts
+          merge-multiple: true
+
+      - name: 发布到 GitHub Releases
+        uses: softprops/action-gh-release@v3
+        with:
+          files: |
+            artifacts/*.dmg
+            artifacts/IReader-*-win.exe
+            artifacts/IReader-*-win.exe.blockmap
+            artifacts/latest.yml
+            artifacts/latest-mac.yml
+          # 本步骤全程只执行一次，直接开启生成说明；旧写法两个矩阵任务各开一次会把
+          # 同一段说明叠加两遍（实测 v1.2.0 / v1.2.1 的 Full Changelog 段重复），
+          # 当时靠 runner.os == 'Windows' 规避，现随发布收口一并去掉
+          generate_release_notes: true
