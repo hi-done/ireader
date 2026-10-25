@@ -1,7 +1,7 @@
 // 页组划分与方向映射（纯函数）
 // 对应设计文档 §4.2，重点单测对象
 
-import type { Direction, ReadingMode } from '../../shared/types'
+import type { Direction, ReadingMode, RowOrder } from '../../shared/types'
 
 /** 一个页组：按阅读方向已排好左右显示顺序的页码数组（1-2 个） */
 export interface Spread {
@@ -18,6 +18,8 @@ export interface SpreadOptions {
   direction: Direction
   /** 双页模式下封面（第 1 页）是否单独成页 */
   coverSinglePage: boolean
+  /** 纵向行内页序：沿用切入 ttb 前的横向方向，缺省左→右（仅 ttb 生效） */
+  rowOrder?: RowOrder
 }
 
 /**
@@ -46,16 +48,22 @@ export function buildSpreads(totalPages: number, options: SpreadOptions): Spread
   return groups.map((pages) => ({
     firstPage: pages[0],
     pages,
-    displayOrder: toDisplayOrder(pages, options.direction),
+    displayOrder: toDisplayOrder(pages, options.direction, options.rowOrder),
   }))
 }
 
 /** 将页组内页码按屏幕左→右的顺序排列 */
-export function toDisplayOrder(pages: number[], direction: Direction): number[] {
+export function toDisplayOrder(
+  pages: number[],
+  direction: Direction,
+  rowOrder: RowOrder = 'ltr'
+): number[] {
   if (pages.length < 2) return [...pages]
   // LTR（韩漫）：第 1 页在左、第 2 页在右 → 原顺序即为显示顺序
   // RTL（日漫）：第 1 页在右、第 2 页在左 → 反转
-  return direction === 'ltr' ? [...pages] : [...pages].reverse()
+  // TTB（条漫）：行内页序沿用切入纵向前的横向方向，缺省左→右
+  const mirror = direction === 'rtl' || (direction === 'ttb' && rowOrder === 'rtl')
+  return mirror ? [...pages].reverse() : [...pages]
 }
 
 /** 根据页码定位其所属页组在 spreads 中的索引 */

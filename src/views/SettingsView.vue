@@ -179,6 +179,7 @@ const MODE_OPTIONS = computed<SelectOption<ReadingMode>[]>(() => [
 const DIRECTION_OPTIONS = computed<SelectOption<Direction>[]>(() => [
   { value: 'ltr', label: t('settings.direction.ltr') },
   { value: 'rtl', label: t('settings.direction.rtl') },
+  { value: 'ttb', label: t('settings.direction.ttb') },
 ])
 const THEME_OPTIONS = computed<SelectOption<'system' | 'light' | 'dark'>[]>(() => [
   { value: 'system', label: t('settings.theme.system') },

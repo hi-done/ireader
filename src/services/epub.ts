@@ -8,6 +8,7 @@ import ePub, {
   Rendition as EpubRendition,
 } from 'epubjs'
 
+import type { Direction } from '../../shared/types'
 import { t } from '../i18n'
 
 export type { EpubBook, EpubContents, EpubLocation, EpubRendition }
@@ -39,8 +40,10 @@ export function pushNavDiag(msg: string) {
 
 /** 单页 none / 双页 always（强制双页，与 PDF 双页语义一致） */
 export type EpubSpread = 'none' | 'always'
-/** 翻页方向：ltr 左→右 / rtl 右→左 */
-export type EpubDirection = 'ltr' | 'rtl'
+/** 阅读方向：与 PDF/CBZ 共用三态；ttb 走连续滚动的 scrolled 流 */
+export type EpubDirection = Direction
+/** 分页流 / 连续流（ttb 纵向） */
+export type EpubFlow = 'paginated' | 'scrolled'
 /**
  * 布局：reflowable 文字流（同一 section 内分页）/ pre-paginated 固定页。
  * 图片型书（每 section 一张图）必须用 pre-paginated：epub.js 的 reflowable
@@ -63,6 +66,8 @@ export interface EpubRenderOptions {
   layout: EpubLayout
   /** 缩放百分比（100 = 整页适合视口；仅 pre-paginated 生效） */
   zoom: number
+  /** 渲染流：默认分页；ttb 用 scrolled（连续滚动） */
+  flow?: EpubFlow
 }
 
 /** 当前阅读位置（供 UI 指示与进度落盘） */
@@ -115,21 +120,28 @@ export async function detectImageBasedBook(book: EpubBook): Promise<boolean> {
   return imageSections / checked >= 2 / 3
 }
 
-/** 创建分页渲染（单页/双页按选项），字号应用到全部视图；
+/** 创建渲染（分页或连续流），字号应用到全视图；
  *  方向先走构造参数，再显式调用 direction() 覆盖书籍元数据里的方向 */
 export function renderEpub(book: EpubBook, element: HTMLElement, options: EpubRenderOptions): EpubRendition {
+  const flow = options.flow ?? 'paginated'
+  // 纵向连续流固定 ltr：内容自上而下堆叠，不参与 rtl 的横向镜像
+  const dir: 'ltr' | 'rtl' = options.direction === 'rtl' ? 'rtl' : 'ltr'
   const rendition = book.renderTo(element, {
     width: options.width,
     height: options.height,
-    flow: 'paginated',
+    flow,
+    // continuous 管理器才会在滚动时前后拼接 section；default 只能整屏翻页
+    manager: flow === 'scrolled' ? 'continuous' : 'default',
     layout: options.layout,
-    spread: options.spread,
-    defaultDirection: options.direction,
+    spread: flow === 'scrolled' ? 'none' : options.spread,
+    defaultDirection: dir,
   })
-  rendition.direction(options.direction)
-  // 显式设置 spread：双页传 min=0 强制生效——epub.js 默认 minSpreadWidth=800，
-  // 且构造期 settings.minSpreadWidth || 800 会吞掉 0，只能运行时用 layout.spread(spread, 0) 覆盖
-  rendition.spread(options.spread, options.spread === 'always' ? 0 : undefined)
+  rendition.direction(dir)
+  if (flow !== 'scrolled') {
+    // 显式设置 spread：双页传 min=0 强制生效——epub.js 默认 minSpreadWidth=800，
+    // 且构造期 settings.minSpreadWidth || 800 会吞掉 0，只能运行时用 layout.spread(spread, 0) 覆盖
+    rendition.spread(options.spread, options.spread === 'always' ? 0 : undefined)
+  }
   rendition.themes.fontSize(`${options.fontSize}%`)
   hardenRenditionQueue(rendition)
   return rendition

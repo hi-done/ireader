@@ -43,6 +43,43 @@ describe('toDisplayOrder - 阅读方向镜像', () => {
   it('单页页组方向不影响顺序', () => {
     expect(toDisplayOrder([1], 'rtl')).toEqual([1])
   })
+
+  it('TTB（条漫）默认：行内左→右，不反转', () => {
+    expect(toDisplayOrder([2, 3], 'ttb')).toEqual([2, 3])
+    expect(toDisplayOrder([2, 3], 'ttb', 'ltr')).toEqual([2, 3])
+  })
+
+  it('TTB 从右→左切入：行内镜像为右→左', () => {
+    expect(toDisplayOrder([2, 3], 'ttb', 'rtl')).toEqual([3, 2])
+  })
+
+  it('横向方向不受 rowOrder 影响', () => {
+    expect(toDisplayOrder([2, 3], 'ltr', 'rtl')).toEqual([2, 3])
+  })
+})
+
+describe('buildSpreads - ttb 纵向', () => {
+  it('双页模式：行内升序且封面单独成行', () => {
+    const spreads = buildSpreads(5, { mode: 'double', direction: 'ttb', coverSinglePage: true })
+    expect(spreads.map((s) => s.pages)).toEqual([[1], [2, 3], [4, 5]])
+    expect(spreads.map((s) => s.displayOrder)).toEqual([[1], [2, 3], [4, 5]])
+  })
+
+  it('单页模式：每组一页，顺序升序', () => {
+    const spreads = buildSpreads(3, { mode: 'single', direction: 'ttb', coverSinglePage: true })
+    expect(spreads.map((s) => s.displayOrder)).toEqual([[1], [2], [3]])
+  })
+
+  it('rowOrder=rtl（从右→左切入）：行内镜像，firstPage 仍取组内首页', () => {
+    const spreads = buildSpreads(5, {
+      mode: 'double',
+      direction: 'ttb',
+      coverSinglePage: true,
+      rowOrder: 'rtl',
+    })
+    expect(spreads.map((s) => s.firstPage)).toEqual([1, 2, 4])
+    expect(spreads.map((s) => s.displayOrder)).toEqual([[1], [3, 2], [5, 4]])
+  })
 })
 
 describe('findSpreadIndexByPage', () => {

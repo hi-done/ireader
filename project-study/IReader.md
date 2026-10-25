@@ -20,7 +20,7 @@ IReader 是一款纯离线的本地漫画/电子书阅读器（Electron + Vue 3�
 2. 文库：主页（LibraryView）展示书籍网格与合集；导入、移除、重命名、移动合集等均经 IPC 到主进程，数据落 SQLite，封面由封面队列后台生成。
 3. 打开书籍：进入 reader 路由后按格式分发——EPUB 由 EpubReaderView 处理，PDF 由 ReaderView 的 Canvas 阅读器处理；经 ipc.reader.open 获取 ireader:// 文件地址与阅读进度，分别交给 pdf.js / epub.js 加载并恢复断点。
 4. 阅读翻页：状态（页组索引 / CFI）驱动渲染；PDF 附卷曲动画与位图缓存预取；进度防抖 1s 落盘，关闭/换书时立即 flush。（详见 Q1）
-5. 设置：SettingsView 修改的偏好经 IPC 持久化到 SQLite，阅读器实时读取（默认模式/方向、预取数量、封面单独成页、EPUB 字号等）。
+5. 设置：SettingsView 修改的偏好经 IPC 持久化到 SQLite；其中「默认模式/默认方向」只在书**首次 open 且无进度记录**时作为兜底值，此后由每本书的 reading_progress 固化，改设置不再回溯（详见 Q7）；预取数量、封面单独成页、EPUB 字号等在打开/渲染时读取。
 
 ## 项目代码结构
 
@@ -59,3 +59,4 @@ IReader 是一款纯离线的本地漫画/电子书阅读器（Electron + Vue 3�
 - [Q4-20261016 PDF 翻页动画中与结束后新页面缩放感的成因](./questions/Q4-20261016.md)
 - [Q5-20261017 EPUB 阅读器缩放为何采用百分比而非适宽/适高/原始](./questions/Q5-20261017.md)
 - [Q6-20261020 按钮主题色是什么及由什么控制](./questions/Q6-20261020.md)
+- [Q7-20261025 设置中的默认阅读方向在何时生效](./questions/Q7-20261025.md)

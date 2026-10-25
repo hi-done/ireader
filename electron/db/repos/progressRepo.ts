@@ -2,7 +2,7 @@
 // 对应设计文档 §5.1
 
 import { getDatabase } from '../database'
-import type { Direction, ReadingMode, ReadingProgress, ZoomMode } from '../../../shared/types'
+import type { Direction, ReadingMode, ReadingProgress, RowOrder, ZoomMode } from '../../../shared/types'
 
 export interface ProgressRow {
   book_id: number
@@ -14,6 +14,8 @@ export interface ProgressRow {
   updated_at: number
   cfi: string | null
   percentage: number | null
+  /** 纵向双页行内页序；旧版本行为 NULL（视为左→右） */
+  row_order: RowOrder | null
 }
 
 export const progressRepo = {
@@ -26,12 +28,12 @@ export const progressRepo = {
   upsert(bookId: number, progress: ReadingProgress): void {
     getDatabase()
       .prepare(
-        `INSERT INTO reading_progress (book_id, page, mode, direction, zoom_mode, zoom_scale, updated_at, cfi, percentage)
-         VALUES (@bookId, @page, @mode, @direction, @zoomMode, @zoomScale, @updatedAt, @cfi, @percentage)
+        `INSERT INTO reading_progress (book_id, page, mode, direction, zoom_mode, zoom_scale, updated_at, cfi, percentage, row_order)
+         VALUES (@bookId, @page, @mode, @direction, @zoomMode, @zoomScale, @updatedAt, @cfi, @percentage, @rowOrder)
          ON CONFLICT(book_id) DO UPDATE SET
            page = @page, mode = @mode, direction = @direction,
            zoom_mode = @zoomMode, zoom_scale = @zoomScale, updated_at = @updatedAt,
-           cfi = @cfi, percentage = @percentage`
+           cfi = @cfi, percentage = @percentage, row_order = @rowOrder`
       )
       .run({
         bookId,
@@ -43,6 +45,7 @@ export const progressRepo = {
         updatedAt: progress.updatedAt,
         cfi: progress.cfi ?? null,
         percentage: progress.percentage ?? null,
+        rowOrder: progress.rowOrder ?? 'ltr',
       })
   },
 }
@@ -54,6 +57,7 @@ export function toReadingProgress(row: ProgressRow): ReadingProgress {
     percentage: row.percentage,
     mode: row.mode,
     direction: row.direction,
+    rowOrder: row.row_order === 'rtl' ? 'rtl' : 'ltr',
     zoom: { mode: row.zoom_mode, scale: row.zoom_scale },
     updatedAt: row.updated_at,
   }

@@ -1,5 +1,5 @@
 <template>
-  <div ref="rootEl" class="reader-view" @mousemove="onMouseMove">
+  <div ref="rootEl" class="reader-view" @mousemove="onMouseMove" @wheel="onRootWheel">
     <header class="top-bar" :class="{ visible: barsVisible }">
       <button class="icon-btn" @click="goBack">{{ t('common.back') }}</button>
       <span class="title">{{ bookTitle }}</span>
@@ -20,12 +20,30 @@
         {{ t('reader.nextBook') }}
       </button>
       <div class="controls">
-        <button @click="store.toggleSpread()">
-          {{ store.spread === 'always' ? t('reader.double') : t('reader.single') }}
-        </button>
-        <button @click="store.toggleDirection()">
-          {{ store.direction === 'ltr' ? t('reader.dirLtr') : t('reader.dirRtl') }}
-        </button>
+        <!-- 文字型纵向（连续正文无页边界）不支持双页：置灰并用卡片提示原因；
+             禁用按钮不派发指针事件，故提示挂在包裹层 -->
+        <span
+          class="spread-guard"
+          @pointerenter="openSpreadTip"
+          @pointerleave="closeTip"
+          @focusin="openSpreadTip"
+          @blur="closeTip"
+        >
+          <button :disabled="isVerticalText" @click="store.toggleSpread()">
+            {{ store.spread === 'always' ? t('reader.double') : t('reader.single') }}
+          </button>
+        </span>
+        <SelectMenu
+          class="direction-select"
+          :model-value="store.direction"
+          :options="DIRECTION_OPTIONS"
+          :label="t('reader.direction')"
+          @change="onDirectionSelect"
+          @open="pinBars"
+          @close="unpinBars"
+          @trigger-enter="openDirectionTip"
+          @trigger-leave="closeTip"
+        />
         <SelectMenu
           class="zoom-select"
           :model-value="zoomValue"
@@ -50,21 +68,37 @@
 
     <div class="page-area">
       <!-- epub.js 渲染容器：始终在布局中（打开时必须有确定宽高），加载态用提示层覆盖 -->
-      <div ref="epubAreaEl" class="epub-area" />
+      <div
+        ref="epubAreaEl"
+        class="epub-area"
+        :class="{ 'is-vertical': isVerticalText }"
+      />
       <div v-if="loadError" class="state-tip">
         <p>{{ t('reader.loadFailed', { message: loadError }) }}</p>
         <button @click="goBack">{{ t('reader.backToLibrary') }}</button>
       </div>
-      <div v-else-if="!store.ready" class="state-tip">{{ t('reader.loading') }}</div>
+      <div v-else-if="!store.ready || switching" class="state-tip">{{ t('reader.loading') }}</div>
       <div
-        v-if="store.ready && !loadError"
+        v-if="store.ready && !loadError && !isVerticalImage"
         class="hotzone hotzone-left"
         @click="onHotzoneClick('left')"
       />
       <div
-        v-if="store.ready && !loadError"
+        v-if="store.ready && !loadError && !isVerticalImage"
         class="hotzone hotzone-right"
         @click="onHotzoneClick('right')"
+      />
+      <!-- 图片型 + 上→下：canvas 纵向视图（连续流会强制单列，故不建 rendition） -->
+      <VerticalScrollView
+        v-if="verticalSource"
+        ref="verticalRef"
+        class="epub-vertical"
+        :rows="store.verticalRows"
+        :initial-page="initialVerticalPage"
+        :sizing="verticalSizing"
+        :source="verticalSource"
+        @page-change="onVerticalPageChange"
+        @turn="onVerticalStep"
       />
     </div>
 
@@ -135,6 +169,11 @@ import { cancelTurnCurl, isTurnCurlActive, playTurnCurl } from '../services/turn
 import { appLocale, t } from '../i18n'
 import { localizeError } from '../i18n/errors'
 import { compareTitles } from '../services/libraryList'
+import type { Direction } from '../../shared/types'
+import VerticalScrollView from '../components/reader/VerticalScrollView.vue'
+import { createEpubImageSource } from '../services/epubVertical'
+import type { VerticalPageSource, VerticalSizing } from '../services/verticalLayout'
+import { normalizeWheelDelta } from '../services/wheelScroll'
 
 const isDev = import.meta.env?.DEV === true
 
@@ -168,12 +207,25 @@ function openSeekTip(event: PointerEvent | FocusEvent) {
   openTip(event, t('reader.dragToSeek'), { placement: 'above' })
 }
 
+/** 顶栏方向下拉提示 */
+function openDirectionTip(anchor: HTMLElement) {
+  openTipAt(anchor, t('reader.direction'))
+}
+
+/** 双页按钮提示：仅在文字型纵向（禁用态）说明原因 */
+function openSpreadTip(event: PointerEvent | FocusEvent) {
+  if (!isVerticalText.value) return
+  openTip(event, t('reader.verticalTextSingle'))
+}
+
 // 顶栏 / 底栏淡出后控件已不可见：提示框同步收起，不悬浮在空处
 watch(barsVisible, (visible) => {
   if (!visible) closeTip()
 })
 
 const loadError = ref('')
+/** 跨 ttb 方向切换重建引擎期间显示加载态 */
+const switching = ref(false)
 const epubAreaEl = ref<HTMLElement | null>(null)
 /** 根元素 ref：pageCurl 的 container（.reader-view 已是 position: relative） */
 const rootEl = ref<HTMLElement | null>(null)
@@ -205,9 +257,101 @@ const locationLabel = computed(() => {
 
 const atEnd = computed(() => {
   if (!store.ready) return true
+  // 文字型纵向：连续流滚动到底才派发 relocated，用进度兜底避免末尾「下一屏」失效一次
+  if (isVerticalText.value && store.current && store.current.percentage >= 99.9) return true
   if (store.locationsReady && totalPages.value > 0) return store.atEnd
   return false
 })
+
+// —— 阅读方向 / 纵向视图 ——
+const DIRECTION_OPTIONS = computed<SelectOption<Direction>[]>(() => [
+  { value: 'ltr', label: t('reader.dirLtr') },
+  { value: 'rtl', label: t('reader.dirRtl') },
+  { value: 'ttb', label: t('reader.dirTtb') },
+])
+/** 方向三态循环顺序（r 键依次切换） */
+const DIRECTION_CYCLE: Direction[] = ['ltr', 'rtl', 'ttb']
+
+const isVertical = computed(() => store.direction === 'ttb')
+/** 文字型纵向：epub.js 连续流（scrolled + continuous），双页不可用 */
+const isVerticalText = computed(() => isVertical.value && store.layout === 'reflowable')
+/** 图片型纵向：不建 rendition，由 VerticalScrollView 负责绘制与滚动 */
+const isVerticalImage = computed(() => isVertical.value && store.layout === 'pre-paginated')
+
+const verticalRef = ref<InstanceType<typeof VerticalScrollView> | null>(null)
+/** 图片型纵向页面源：book 就绪后创建（内部按页做 LRU 元数据缓存） */
+const verticalSource = computed<VerticalPageSource | null>(() => {
+  if (!isVerticalImage.value || !store.ready) return null
+  const book = store.getBook()
+  return book ? createEpubImageSource(book) : null
+})
+/** 纵向尺寸：图片型 zoom 100 = 按视口高铺满，其余按比例放大缩小 */
+const verticalSizing = computed<VerticalSizing>(() => ({ mode: 'custom', scale: store.zoom / 100 }))
+/** 纵向首次定位：当前 spine 索引（双页时对齐到组首页） */
+const initialVerticalPage = computed(() => store.current?.index ?? 0)
+
+/** 纵向顶部行变化 → 回写当前位置（store 内 1s 防抖落盘） */
+function onVerticalPageChange(page: number): void {
+  store.setVerticalPosition(page)
+  navIndex = store.current?.index ?? navIndex
+}
+
+/** 纵向视图内热区点击：滚到上/下一行顶部（无动画） */
+function onVerticalStep(delta: number): void {
+  verticalRef.value?.step(delta)
+}
+
+/** 顶栏下拉选方向（值来自 DIRECTION_OPTIONS） */
+function onDirectionSelect(value: Direction): void {
+  void applyDirection(value)
+}
+
+/** r 键三态循环：ltr → rtl → ttb */
+function cycleDirection(): void {
+  const index = DIRECTION_CYCLE.indexOf(store.direction)
+  void applyDirection(DIRECTION_CYCLE[(index + 1) % DIRECTION_CYCLE.length])
+}
+
+/**
+ * 切换阅读方向：ltr ↔ rtl 只改引擎方向（不重建），跨 ttb 边界必须重建引擎
+ * （分页流 ↔ 连续流的 flow / manager 不同），期间作废在飞的翻页编排并显示加载态。
+ */
+async function applyDirection(next: Direction): Promise<void> {
+  // 打开中 / 上一次重建引擎尚未完成：忽略本次选择，避免并发销毁重建
+  if (next === store.direction || !store.ready || switching.value) return
+  openSeq++
+  pendingDelta = 0
+  pendingJump = null
+  clearBurstSession()
+  discardTurn()
+  sliderDragging = false
+  slideStartIndex = null
+  slideStartCfi = null
+  slideFromPromise = null
+  if (slideTimer) {
+    clearTimeout(slideTimer)
+    slideTimer = null
+  }
+  // ltr ↔ rtl：引擎不重建，仅改书写方向，阅读位置不变
+  if ((next === 'ttb') === isVertical.value) {
+    await store.setDirection(next)
+    navIndex = store.current?.index ?? navIndex
+    sliderIndex.value = navIndex ?? 0
+    return
+  }
+  switching.value = true
+  // 旧引擎即将销毁：先摘 iframe 事件，重建后按新引擎重新绑定
+  unbindRenditionEvents()
+  try {
+    await store.setDirection(next)
+    navIndex = store.current?.index ?? 0
+    sliderIndex.value = navIndex
+  } finally {
+    await nextTick() // 等纵向视图挂载 / epub 容器重建后再挂事件
+    bindRenditionEvents()
+    switching.value = false
+  }
+}
 
 onMounted(() => {
   window.addEventListener('keydown', onKeydown)
@@ -258,6 +402,7 @@ function openBook(id: number | string) {
 }
 
 async function doOpen(id: number) {
+  switching.value = false
   loadError.value = ''
   // 跨书切换：作废进行中的队列消费与翻页编排并揭除冻结帧，避免旧书画面残留在新书阅读区
   openSeq++
@@ -277,15 +422,22 @@ async function doOpen(id: number) {
   if (!epubAreaEl.value) throw new Error(t('reader.viewNotReady'))
   await store.open(id, epubAreaEl.value)
   navIndex = store.current?.index ?? 0 // 新书权威页索引
+  sliderIndex.value = navIndex
   bindRenditionEvents()
 }
 
 // —— iframe 内事件转发 ——
 // 键盘：epub.js 将 contents 的 keydown 自动 re-emit 到 rendition（passEvents）；
 // 滚轮不在其转发列表，需在每次渲染后手动挂到 iframe window 上
-let lastWheelWindow: Window | null = null
+/** 已挂滚轮转发的 iframe window：连续流同时存在多个视图，按窗口去重避免重复滚动 */
+const wheelWindows = new WeakSet<Window>()
 
 function onFrameWheel(e: WheelEvent) {
+  // 纵向连续流：iframe 内滚轮不冒泡到父文档，手动转发给 epub 容器
+  if (isVerticalText.value) {
+    scrollEpubByWheel(e)
+    return
+  }
   onWheel(e)
 }
 
@@ -298,9 +450,13 @@ function onFrameMousemove(e: MouseEvent) {
 }
 
 function onFrameRendered(_section: unknown, view: { contents?: Contents } | null | undefined) {
-  const win = view?.contents?.window
-  if (!win || win === lastWheelWindow) return
-  lastWheelWindow = win
+  attachWheelWindow(view?.contents?.window)
+}
+
+/** 给单个 iframe 挂滚轮转发（同一窗口只挂一次） */
+function attachWheelWindow(win: Window | null | undefined): void {
+  if (!win || wheelWindows.has(win)) return
+  wheelWindows.add(win)
   win.addEventListener('wheel', onFrameWheel, { passive: true })
 }
 
@@ -310,6 +466,11 @@ function bindRenditionEvents() {
   r.on('keydown', onFrameKeydown)
   r.on('mousemove', onFrameMousemove)
   r.on('rendered', onFrameRendered)
+  // 首次 display 的 rendered 可能在绑定前已派发：给已在册的 iframe 补挂滚轮。
+  // 类型声明把返回值写成单个 Contents，运行时为 Contents[]（rendition.js getContents）
+  for (const contents of r.getContents() as unknown as Contents[]) {
+    attachWheelWindow(contents?.window)
+  }
 }
 
 function unbindRenditionEvents() {
@@ -318,7 +479,6 @@ function unbindRenditionEvents() {
   r.off('keydown', onFrameKeydown)
   r.off('mousemove', onFrameMousemove)
   r.off('rendered', onFrameRendered)
-  lastWheelWindow = null
 }
 
 // —— 上一本 / 下一本：与 PDF 阅读器同规则（主页=未分组按排序偏好，合集内=名称升序）——
@@ -369,6 +529,11 @@ async function toggleFullscreen() {
 }
 
 function onHotzoneClick(side: 'left' | 'right') {
+  // 纵向：左右热区不再镜像（连续流只有上下语义），右 = 下一屏、左 = 上一屏
+  if (isVertical.value) {
+    requestTurn(side === 'right' ? 'forward' : 'back')
+    return
+  }
   // 方向感知（同 PDF ReaderView）：LTR 右热区 = 下一页；RTL 左热区 = 下一页
   const forward = store.direction === 'ltr' ? side === 'right' : side === 'left'
   requestTurn(forward ? 'forward' : 'back')
@@ -466,7 +631,17 @@ function clampPageIndex(index: number): number {
 /** 翻页入口：只记账，由队列串行消费（连翻净位移合并） */
 function requestTurn(dir: 'forward' | 'back'): void {
   if (!store.ready) return
-  pendingDelta += dir === 'forward' ? 1 : -1
+  // 纵向：无卷曲、无冻结帧，图片型滚一行、文字型翻一屏（连续流按视口高滚动）
+  const delta = dir === 'forward' ? 1 : -1
+  if (isVerticalImage.value) {
+    verticalRef.value?.step(delta)
+    return
+  }
+  if (isVerticalText.value) {
+    void (delta > 0 ? store.next() : store.prev())
+    return
+  }
+  pendingDelta += delta
   // 新输入推迟补播：停手计时从最后一次输入重新开始（会话保留，继续累计）
   if (burstSettleTimer) clearTimeout(burstSettleTimer)
   // 卷曲在播：立即揭除（底层已是动画终点），让队列尽快消费本次输入
@@ -477,6 +652,16 @@ function requestTurn(dir: 'forward' | 'back'): void {
 /** 显式跳转（滑块节流跳页 / Home / End）：并入队列串行执行且强制瞬切；返回「队列已空闲」 */
 function requestJump(index: number): Promise<void> {
   if (!store.ready) return Promise.resolve()
+  // 纵向：滚到目标位置即可，不进入动画队列（无快照 / 无卷曲）
+  if (isVerticalImage.value) {
+    verticalRef.value?.scrollToPage(store.alignToSpread(clampPageIndex(index)))
+    return Promise.resolve()
+  }
+  if (isVerticalText.value) {
+    return store.goTo(clampPageIndex(index)).then(() => {
+      navIndex = store.current?.index ?? navIndex
+    })
+  }
   // 显式跳转不补播：滑块有独立会话，Home / End 直接到位
   clearBurstSession()
   const from = navIndex ?? store.current?.index ?? 0
@@ -886,6 +1071,15 @@ watch(
 let slideTimer: ReturnType<typeof setTimeout> | null = null
 function onSlideInput(e: Event) {
   const idx = Number((e.target as HTMLInputElement).value)
+  if (isVertical.value) {
+    // 纵向：拖动即滚到目标行顶部，不截快照、不排队、不补播
+    sliderIndex.value = idx
+    if (slideTimer) clearTimeout(slideTimer)
+    slideTimer = setTimeout(() => {
+      void requestJump(idx)
+    }, 200)
+    return
+  }
   const sessionStart = slideStartIndex == null
   sliderDragging = true
   sliderIndex.value = idx
@@ -923,6 +1117,12 @@ function onSlideChange(e: Event) {
   if (slideTimer) {
     clearTimeout(slideTimer)
     slideTimer = null
+  }
+  if (isVertical.value) {
+    // 纵向松手：直接滚到目标行，无补播
+    void requestJump(idx)
+    sliderIndex.value = idx
+    return
   }
   void finishSlideCurl(idx) // 松手立即跳到最终位置，并补播唯一一次卷曲
   setTimeout(() => {
@@ -981,10 +1181,34 @@ function onWheel(e: WheelEvent) {
     else store.setFontSize(store.fontSize + delta)
     return
   }
+  // 纵向：滚动交给容器（文字型经 onFrameWheel / onRootWheel 转发），不做翻页
+  if (isVertical.value) return
   if (wheelLock || Math.abs(e.deltaY) < 20) return
   wheelLock = true
   setTimeout(() => (wheelLock = false), 250)
   requestTurn(e.deltaY > 0 ? 'forward' : 'back')
+}
+
+/** epub.js 的滚动容器（连续流由 manager 创建在 .epub-area 内） */
+function epubScroller(): HTMLElement | null {
+  return epubAreaEl.value?.querySelector<HTMLElement>('.epub-container') ?? null
+}
+
+/** 把滚轮增量转给 epub 容器的 scrollTop：iframe 内与热区覆盖层上都不会原生滚动 */
+function scrollEpubByWheel(e: WheelEvent): void {
+  const container = epubScroller()
+  if (!container) return
+  container.scrollTop += normalizeWheelDelta(e, container.clientHeight)
+}
+
+/** 容器外的滚轮（两侧热区盖住容器）：文字型纵向下手动转发，否则滚轮在热区上无响应 */
+function onRootWheel(e: WheelEvent): void {
+  if (!isVerticalText.value) return
+  const target = e.target
+  if (target instanceof HTMLElement && target.closest('.top-bar, .bottom-bar')) return
+  const container = epubScroller()
+  if (!container || (target instanceof Node && container.contains(target))) return
+  scrollEpubByWheel(e)
 }
 
 function showBarsTemporarily(ms = 3000) {
@@ -1086,6 +1310,15 @@ function onKeydown(e: KeyboardEvent) {
         if (store.layout === 'pre-paginated') store.setZoom(store.zoom - 10)
         else store.setFontSize(store.fontSize - 10)
       }
+      break
+    case 'd':
+    case 'D':
+      // 文字型纵向为单列：双页切换无意义（store 内亦为空操作）
+      if (!isVerticalText.value) store.toggleSpread()
+      break
+    case 'r':
+    case 'R':
+      cycleDirection()
       break
     case 'f':
     case 'F':
@@ -1193,10 +1426,22 @@ function onKeydown(e: KeyboardEvent) {
   border-radius: 4px;
 }
 
-.zoom-select {
+/* 文字型纵向禁用双页：按钮不可点，提示挂在包裹层上 */
+.controls button:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+.spread-guard {
+  display: inline-flex;
+}
+
+.zoom-select,
+.direction-select {
   /* 深色顶栏变体：透明底 + 半透明白描边，尺寸对齐相邻 .controls button */
   --select-height: 26px;
-  --select-min-width: 96px;
+  --select-min-width: 104px;
   --select-radius: 4px;
   --select-padding: 0 6px;
   --select-bg: transparent;
@@ -1223,9 +1468,40 @@ function onKeydown(e: KeyboardEvent) {
   inset: 0;
 }
 
+/* 上→下（文字型）：epub.js 连续流的容器自带纵向滚动，章节间用 padding 留固定间隙。
+   用 padding 而非 margin：IframeView.bounds() 含 padding，连续流 erase() 会按 bounds
+   高度补偿滚动位置，不会产生 16px 漂移 */
+.epub-area.is-vertical :deep(.epub-container > .epub-view + .epub-view) {
+  padding-top: 16px;
+}
+
+.epub-area.is-vertical :deep(.epub-container) {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.28) transparent;
+}
+
+.epub-area.is-vertical :deep(.epub-container)::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.epub-area.is-vertical :deep(.epub-container)::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.28);
+  border-radius: 4px;
+}
+
+/* 上→下（图片型）：纵向 canvas 视图覆盖在布局占位的 .epub-area 之上；
+   后者不可 display:none，否则切回横向时矩形为 0×0 建不了引擎 */
+.epub-vertical {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+}
+
 .state-tip {
   position: absolute;
   inset: 0;
+  z-index: 2;
   color: #888;
   display: flex;
   flex-direction: column;

@@ -2,7 +2,18 @@
 // 对应设计文档 §6.4
 
 export type ReadingMode = 'single' | 'double'
-export type Direction = 'ltr' | 'rtl' // ltr = 左→右（韩漫）  rtl = 右→左（日漫）
+/**
+ * 阅读方向：
+ * - ltr：左→右（韩漫），横向分屏，向右翻页
+ * - rtl：右→左（日漫），横向分屏，向左翻页
+ * - ttb：上→下（条漫），纵向连续滚动，不播翻页动画，行间固定 16px
+ */
+export type Direction = 'ltr' | 'rtl' | 'ttb'
+/**
+ * 纵向（ttb）双页行内页序：沿用切入纵向前的横向方向（ltr = 行内左→右）。
+ * 与 Direction 分开保存：方向切为 ttb 后已丢失原横向方向，需单独记住并持久化。
+ */
+export type RowOrder = 'ltr' | 'rtl'
 export type ZoomMode = 'fitWidth' | 'fitHeight' | 'original' | 'custom'
 export type SortBy = 'lastOpenedAt' | 'addedAt' | 'title'
 export type SortOrder = 'asc' | 'desc'
@@ -16,6 +27,8 @@ export interface ReadingProgress {
   percentage?: number | null
   mode: ReadingMode
   direction: Direction
+  /** 纵向双页行内页序；缺省左→右（仅 ttb 生效，横向方向忽略） */
+  rowOrder?: RowOrder
   zoom: { mode: ZoomMode; scale: number }
   updatedAt: number
 }

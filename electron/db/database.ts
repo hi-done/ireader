@@ -78,6 +78,11 @@ const MIGRATIONS: Array<(db: Database.Database) => void> = [
       CREATE INDEX IF NOT EXISTS idx_reading_stats_day ON reading_stats(day);
     `)
   },
+
+  // v5: 纵向双页行内页序（ltr / rtl；NULL 视为左→右）
+  (db) => {
+    db.exec(`ALTER TABLE reading_progress ADD COLUMN row_order TEXT;`)
+  },
 ]
 
 /**

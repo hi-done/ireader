@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { markRaw, ref, shallowRef } from 'vue'
-import type { Direction, ReadingMode, ZoomMode } from '../../shared/types'
+import type { Direction, ReadingMode, RowOrder, ZoomMode } from '../../shared/types'
 import { ipc } from '../services/ipc'
 import { t } from '../i18n'
 import { loadPdfWithTask, type PdfLoadingTask } from '../services/pdf'
@@ -19,6 +19,8 @@ export const useReaderStore = defineStore('reader', () => {
   const numPages = ref(0)
   const mode = ref<ReadingMode>('single')
   const direction = ref<Direction>('rtl')
+  /** 纵向双页行内页序：切入 ttb 时取当时的横向方向；默认左→右 */
+  const rowOrder = ref<RowOrder>('ltr')
   const coverSinglePage = ref(true)
   const zoomMode = ref<ZoomMode>('fitHeight')
   const zoomScale = ref(1)
@@ -32,6 +34,7 @@ export const useReaderStore = defineStore('reader', () => {
       mode: mode.value,
       direction: direction.value,
       coverSinglePage: coverSinglePage.value,
+      rowOrder: rowOrder.value,
     })
     if (keepPage !== undefined) {
       currentIndex.value = findSpreadIndexByPage(spreads.value, keepPage)
@@ -59,6 +62,8 @@ export const useReaderStore = defineStore('reader', () => {
     const progress = result.progress
     mode.value = progress?.mode ?? settingsStore.settings.defaultMode
     direction.value = progress?.direction ?? settingsStore.settings.defaultDirection
+    // 纵向行内页序：仅在进度里保存过（上次就是 ttb）时存在，否则保持默认左→右
+    rowOrder.value = progress?.rowOrder ?? 'ltr'
     coverSinglePage.value = settingsStore.settings.coverSinglePage
     zoomMode.value = progress?.zoom.mode ?? 'fitHeight'
     zoomScale.value = progress?.zoom.scale ?? 1
@@ -75,6 +80,11 @@ export const useReaderStore = defineStore('reader', () => {
 
   function setDirection(next: Direction) {
     const page = spreads.value[currentIndex.value]?.firstPage ?? 1
+    // 切入纵向时记住当前横向方向作为行内页序（ltr → 左↔右，rtl → 右↔左）；
+    // 已在纵向时再切换不动 rowOrder
+    if (next === 'ttb' && direction.value !== 'ttb') {
+      rowOrder.value = direction.value === 'rtl' ? 'rtl' : 'ltr'
+    }
     direction.value = next
     rebuildSpreads(page) // displayOrder 依赖方向镜像，切换后必须重建
     scheduleSave()
@@ -117,6 +127,7 @@ export const useReaderStore = defineStore('reader', () => {
       page,
       mode: mode.value,
       direction: direction.value,
+      rowOrder: rowOrder.value,
       zoom: { mode: zoomMode.value, scale: zoomScale.value },
       updatedAt: Date.now(),
     })
@@ -138,6 +149,7 @@ export const useReaderStore = defineStore('reader', () => {
     numPages,
     mode,
     direction,
+    rowOrder,
     coverSinglePage,
     zoomMode,
     zoomScale,

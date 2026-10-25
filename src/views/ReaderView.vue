@@ -33,9 +33,17 @@
         <button @click="reader.setMode(reader.mode === 'single' ? 'double' : 'single')">
           {{ reader.mode === 'single' ? t('reader.single') : t('reader.double') }}
         </button>
-        <button @click="reader.setDirection(reader.direction === 'ltr' ? 'rtl' : 'ltr')">
-          {{ reader.direction === 'ltr' ? t('reader.dirLtr') : t('reader.dirRtl') }}
-        </button>
+        <SelectMenu
+          class="direction-select"
+          :model-value="reader.direction"
+          :options="DIRECTION_OPTIONS"
+          :label="t('reader.direction')"
+          @change="onDirectionSelect"
+          @open="pinBars"
+          @close="unpinBars"
+          @trigger-enter="openDirectionTip"
+          @trigger-leave="closeTip"
+        />
         <SelectMenu
           class="zoom-select"
           :model-value="reader.zoomMode"
@@ -58,12 +66,23 @@
       </div>
     </header>
 
-    <div ref="pageAreaEl" class="page-area">
+    <div ref="pageAreaEl" class="page-area" :class="{ 'is-vertical': isVertical }">
       <div v-if="loadError" class="state-tip">
         <p>{{ t('reader.loadFailed', { message: loadError }) }}</p>
         <button @click="goBack">{{ t('reader.backToLibrary') }}</button>
       </div>
       <div v-else-if="!reader.doc" class="state-tip">{{ t('reader.loading') }}</div>
+      <!-- 上→下：纵向连续滚动，不播翻页动画，行间固定间隙 -->
+      <VerticalScrollView
+        v-else-if="isVertical && verticalSource"
+        ref="verticalRef"
+        :rows="verticalRows"
+        :initial-page="initialVerticalPage"
+        :sizing="verticalSizing"
+        :source="verticalSource"
+        @page-change="onVerticalPageChange"
+        @turn="verticalStep"
+      />
       <template v-else>
         <!-- margin:auto：内容小于视口时居中，超出视口时可滚动到边缘 -->
         <div ref="pageContentEl" class="page-content">
@@ -86,7 +105,7 @@
       <button
         class="nav-btn"
         :disabled="reader.currentIndex <= 0"
-        @click="reader.prev()"
+        @click="onNavStep(-1)"
       >
         {{ t('reader.prevPage') }}
       </button>
@@ -102,7 +121,7 @@
       <button
         class="nav-btn"
         :disabled="reader.currentIndex >= reader.spreads.length - 1"
-        @click="reader.next()"
+        @click="onNavStep(1)"
       >
         {{ t('reader.nextPage') }}
       </button>
@@ -123,15 +142,17 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import type { ZoomMode } from '../../shared/types'
+import type { Direction, ZoomMode } from '../../shared/types'
 import { useReaderStore } from '../stores/reader'
 import { useLibraryStore } from '../stores/library'
 import { useSettingsStore } from '../stores/settings'
 import { ipc } from '../services/ipc'
+import { findSpreadIndexByPage } from '../services/spread'
 import { getFromCache, putToCache, clearCache } from '../services/pageCache'
 import type { SelectOption } from '../services/selectMenu'
 import SelectMenu from '../components/ui/SelectMenu.vue'
 import CardTip from '../components/ui/CardTip.vue'
+import VerticalScrollView from '../components/reader/VerticalScrollView.vue'
 import { useHoverTip } from '../components/ui/useHoverTip'
 import {
   cancelPageRender,
@@ -140,6 +161,8 @@ import {
   type RenderPageOptions,
 } from '../services/pageRenderer'
 import { BURST_SETTLE_MS, canReplayBurst, PDF_ANIM_BUDGET_MS, TurnPolicy } from '../services/turnPolicy'
+import { createPageDocumentSource } from '../services/verticalSource'
+import type { VerticalPageSource, VerticalRow, VerticalSizing } from '../services/verticalLayout'
 import { cancelTurnCurl, isTurnCurlActive, playTurnCurl } from '../services/turnAnimator'
 import { startTracking, stopTracking, setTrackingPaused } from '../services/readingTracker'
 import {
@@ -182,6 +205,16 @@ const ZOOM_MODE_OPTIONS = computed<SelectOption<ZoomMode>[]>(() => {
   return options
 })
 
+// 阅读方向：三档（左→右 / 右→左 / 上→下），二态按钮无法表达三态
+const DIRECTION_OPTIONS = computed<SelectOption<Direction>[]>(() => [
+  { value: 'ltr', label: t('reader.dirLtr') },
+  { value: 'rtl', label: t('reader.dirRtl') },
+  { value: 'ttb', label: t('reader.dirTtb') },
+])
+
+/** r 键循环顺序：ltr → rtl → ttb */
+const DIRECTION_CYCLE: Direction[] = ['ltr', 'rtl', 'ttb']
+
 const barsVisible = ref(false)
 let hideTimer: ReturnType<typeof setTimeout> | null = null
 /** 顶栏下拉展开期间锁定可见：鼠标在触发器上移动会反复触发 showBarsTemporarily，只清一次计时器不够 */
@@ -198,6 +231,10 @@ function openFullscreenTip(event: PointerEvent | FocusEvent) {
 /** 下拉触发器提示：锚点由 SelectMenu 透出（组件内部已过滤触屏与不可见焦点） */
 function openZoomTip(anchor: HTMLElement) {
   openTipAt(anchor, t('reader.zoom'))
+}
+
+function openDirectionTip(anchor: HTMLElement) {
+  openTipAt(anchor, t('reader.direction'))
 }
 
 // 顶栏淡出后按钮已不可见：提示框同步收起，不悬浮在空处
@@ -260,6 +297,70 @@ const currentDisplayPages = computed(
 const currentPageLabel = computed(
   () => reader.spreads[reader.currentIndex]?.firstPage ?? 0
 )
+
+// —— 上→下（ttb）：纵向连续滚动，全部交由 VerticalScrollView 接管 ——
+const isVertical = computed(() => reader.direction === 'ttb')
+const verticalRef = ref<InstanceType<typeof VerticalScrollView> | null>(null)
+
+/** 行 = 页组（已按左→右排序），与横向共用 buildSpreads */
+const verticalRows = computed<VerticalRow[]>(() =>
+  reader.spreads.map((s) => ({ firstPage: s.firstPage, pages: s.displayOrder }))
+)
+
+/** 初始定位页：取当前绘组首页（重开后恢复进度） */
+const initialVerticalPage = computed(
+  () => reader.spreads[reader.currentIndex]?.firstPage ?? 1
+)
+
+/** 缩放口径映射：适宽 = 满行宽；适高/自定义 = 按视口高；原尺寸 = 自然尺寸 */
+const verticalSizing = computed<VerticalSizing>(() => {
+  switch (reader.zoomMode) {
+    case 'fitWidth':
+      return { mode: 'widthScale', scale: 1 }
+    case 'custom':
+      return { mode: 'custom', scale: reader.zoomScale }
+    case 'original':
+      return { mode: 'original' }
+    case 'fitHeight':
+    default:
+      return { mode: 'fitHeight' }
+  }
+})
+
+const verticalSource = computed<VerticalPageSource | null>(() =>
+  reader.doc ? createPageDocumentSource(reader.doc) : null
+)
+
+/** 纵向顶部行变化 → 同步 currentIndex（goTo 内防抖落盘） */
+function onVerticalPageChange(page: number): void {
+  const index = findSpreadIndexByPage(reader.spreads, page)
+  if (index !== reader.currentIndex) reader.goTo(index)
+}
+
+/** 纵向翻一「页」= 滚到上/下一行顶部（无动画）；越界由组件夹取 */
+function verticalStep(delta: number): void {
+  verticalRef.value?.step(delta)
+}
+
+/** 底栏上一页/下一页：纵向改为滚动一行 */
+function onNavStep(delta: 1 | -1): void {
+  if (isVertical.value) {
+    verticalStep(delta)
+    return
+  }
+  if (delta > 0) reader.next()
+  else reader.prev()
+}
+
+function onDirectionSelect(value: Direction): void {
+  reader.setDirection(value)
+}
+
+/** r 键三态循环：ltr → rtl → ttb */
+function cycleDirection(): void {
+  const index = DIRECTION_CYCLE.indexOf(reader.direction)
+  reader.setDirection(DIRECTION_CYCLE[(index + 1) % DIRECTION_CYCLE.length])
+}
 
 onMounted(async () => {
   // 键盘监听挂 window：绑在 div 上的 keydown 需要焦点，页面刚打开时焦点在 body ，会导致按键全部失效
@@ -400,6 +501,15 @@ function switchBook(delta: 1 | -1) {
 // 是否翻页以 store 的 navCount 判定（仅 goTo 递增），避免把页组重排误判为翻页
 watch(currentDisplayPages, () => void runTurnPass())
 
+// 切到上→下：揭除在播卷曲、清连翻会话、作废预取（纵向不参与动画管线）
+watch(isVertical, (vertical) => {
+  if (!vertical) return
+  clearBurstSession()
+  cancelTurnCurl()
+  cancelPrefetch()
+  policy.reset()
+})
+
 /** 拖动中零渲染：整组缓存命中才贴图（邻页微调仍实时跟随），否则保持当前画面。
  *  跨多页拖动时每轮目标组全缓存 miss，若照常渲染会堆积大量无法取消的
  *  pdf.js 渲染任务（每次都用新建离屏 canvas，重入取消永不触发），导致长时间卡顿 */
@@ -417,6 +527,8 @@ function renderSliderFrame(): void {
 
 /** 单轮翻页：世代号保证「最新请求胜出」，旧轮次在每个 await 检查点静默退出 */
 async function runTurnPass(): Promise<void> {
+  // 上→下：纵向连续滚动由 VerticalScrollView 接管，不进入 policy / 快照 / 卷曲管线
+  if (isVertical.value) return
   const gen = ++turnGen
   if (!bookReady) return // 开书首帧由 openBook 负责
   const startedAt = performance.now()
@@ -611,6 +723,8 @@ watch(
     // 几何已变：旧覆盖层按旧尺寸合成必须立即揭除，预取作废
     cancelTurnCurl()
     cancelPrefetch()
+    // 纵向由组件的 sizing 监听自行重排重渲
+    if (isVertical.value) return
     await nextTick()
     await renderCurrentSpread()
   }
@@ -699,6 +813,8 @@ async function paintPage(
  * fade=false 用于瞬切路径：跳过位图淡入，画面即时切换。
  */
 async function renderCurrentSpread(options: { fade?: boolean } = {}): Promise<boolean> {
+  // 纵向视图没有显示 canvas：早退，避免无意义的离屏渲染污染 pageCache
+  if (isVertical.value) return false
   const doc = reader.doc
   if (!doc) return false
   // 渲染闸门：排队期间若有更新的请求（seq 已前移），本页直接跳过，绝不提交多余渲染；
@@ -750,6 +866,7 @@ function cancelPrefetch(): void {
 /** 停手 150ms 后启动单并发预取；任一翻页 / 缩放 / 开书都会取消重排 */
 function schedulePrefetch(doc: PageDocument): void {
   cancelPrefetch()
+  if (isVertical.value) return
   if (settingsStore.settings.preloadSpreads <= 0 || reader.bookId == null) return
   const token = prefetchSeq
   prefetchTimer = setTimeout(() => {
@@ -810,6 +927,11 @@ function onHotzoneClick(side: 'left' | 'right') {
     suppressClick = false
     return
   }
+  // 纵向：右=下一行、左=上一行
+  if (isVertical.value) {
+    verticalStep(side === 'right' ? 1 : -1)
+    return
+  }
   const forward = reader.direction === 'ltr' ? side === 'right' : side === 'left'
   forward ? reader.next() : reader.prev()
 }
@@ -820,25 +942,32 @@ function onHotzoneClick(side: 'left' | 'right') {
 // sliderUntil 仅作 change 意外丢失时的兜底恢复
 function onSlide(e: Event) {
   const idx = Number((e.target as HTMLInputElement).value)
-  if (idx !== reader.currentIndex) {
-    // 拖动接管：连翻补播会话作废，松手只补播滑块自己的那一次
-    clearBurstSession()
-    // 记录瞬切前画面、方向与快照模式，供松手时播放唯一一次动画
-    slideDir = idx > reader.currentIndex ? 'forward' : 'back'
-    const viewport = isVerticallyScrollable()
-    const snap = snapshotForTurn(viewport)
-    if (snap) {
-      slideFromSnap = snap
-      slideFromViewport = viewport
-    }
-    cancelTurnCurl() // 拖动即揭除在播卷曲，避免覆盖层遮住跟随画面
-    sliderActive = true
-    sliderUntil = Date.now() + 1000 // 兜底：change 丢失时 1s 后恢复动画
-    reader.goTo(idx)
+  if (idx === reader.currentIndex) return
+  // 纵向：拖动即滚到目标行顶部，不截快照、不进入动画
+  if (isVertical.value) {
+    const spread = reader.spreads[idx]
+    if (spread) verticalRef.value?.scrollToPage(spread.firstPage)
+    return
   }
+  // 拖动接管：连翻补播会话作废，松手只补播滑块自己的那一次
+  clearBurstSession()
+  // 记录瞬切前画面、方向与快照模式，供松手时播放唯一一次动画
+  slideDir = idx > reader.currentIndex ? 'forward' : 'back'
+  const viewport = isVerticallyScrollable()
+  const snap = snapshotForTurn(viewport)
+  if (snap) {
+    slideFromSnap = snap
+    slideFromViewport = viewport
+  }
+  cancelTurnCurl() // 拖动即揭除在播卷曲，避免覆盖层遮住跟随画面
+  sliderActive = true
+  sliderUntil = Date.now() + 1000 // 兜底：change 丢失时 1s 后恢复动画
+  reader.goTo(idx)
 }
 
 function onSlideEnd() {
+  // 纵向无松手补播
+  if (isVertical.value) return
   const fromSnap = slideFromSnap
   const dir = slideDir
   const viewport = slideFromViewport
@@ -879,6 +1008,14 @@ async function finishSlide(
 
 let wheelLock = false
 function onWheel(e: WheelEvent) {
+  // 纵向：交给滚动容器原生滚动，仅保留 Ctrl/Cmd 缩放
+  if (isVertical.value) {
+    if (e.ctrlKey || e.metaKey) {
+      e.preventDefault()
+      stepZoom(e.deltaY < 0 ? 0.1 : -0.1)
+    }
+    return
+  }
   if (e.ctrlKey || e.metaKey) {
     // Ctrl/Cmd+滚轮：缩放步进（阻止浏览器页缩放）
     e.preventDefault()
@@ -1028,6 +1165,8 @@ let suppressClick = false
 
 function onMouseDown(e: MouseEvent) {
   if (e.button !== 0 || !pageAreaEl.value) return
+  // 纵向：禁拖拽平移（滚动容器自己承接滚动与横向滚动条）
+  if (isVertical.value) return
   const area = pageAreaEl.value
   if (area.scrollWidth <= area.clientWidth && area.scrollHeight <= area.clientHeight) return
   panning = true
@@ -1047,6 +1186,8 @@ function onMouseUp() {
 
 let resizeTimer: ReturnType<typeof setTimeout> | null = null
 function onResize() {
+  // 纵向由 VerticalScrollView 的 ResizeObserver 自行重排重渲
+  if (isVertical.value) return
   if (resizeTimer) clearTimeout(resizeTimer)
   // 防抖：连续拖拽窗口只重渲最后一帧；缓存签名含视口尺寸，旧位图与旧覆盖层自动失效
   resizeTimer = setTimeout(() => {
@@ -1062,6 +1203,63 @@ function onKeydown(e: KeyboardEvent) {
   if (target.tagName === 'INPUT' || target.tagName === 'SELECT' || target.tagName === 'TEXTAREA') {
     return // 滑块等控件聚焦时让方向键留给控件自身
   }
+  // 上→下：上下键 / 翻页键滚动一行，绝不进入翻页动画管线
+  if (isVertical.value) {
+    switch (e.key) {
+      case 'ArrowDown':
+      case 'ArrowRight':
+      case 'PageDown':
+        verticalStep(1)
+        return
+      case 'ArrowUp':
+      case 'ArrowLeft':
+      case 'PageUp':
+        verticalStep(-1)
+        return
+      case ' ':
+        verticalStep(e.shiftKey ? -1 : 1)
+        return
+      case 'Home':
+        verticalRef.value?.scrollToPage(reader.spreads[0]?.firstPage ?? 1)
+        return
+      case 'End':
+        verticalRef.value?.scrollToPage(
+          reader.spreads[reader.spreads.length - 1]?.firstPage ?? 1
+        )
+        return
+      case 'd':
+      case 'D':
+        reader.setMode(reader.mode === 'single' ? 'double' : 'single')
+        return
+      case 'r':
+      case 'R':
+        cycleDirection()
+        return
+      case 'f':
+      case 'F':
+        toggleFullscreen()
+        return
+      case 'Escape':
+        if (document.fullscreenElement) document.exitFullscreen()
+        else goBack()
+        return
+      case '=':
+      case '+':
+        if (e.ctrlKey || e.metaKey) {
+          e.preventDefault()
+          stepZoom(0.1)
+        }
+        return
+      case '-':
+        if (e.ctrlKey || e.metaKey) {
+          e.preventDefault()
+          stepZoom(-0.1)
+        }
+        return
+    }
+    return
+  }
+
   // 左右键固定语义（左=上一页、右=下一页），不随 RTL 翻转：
   // 通用操作习惯优先于阅读方向的几何隐喻
   switch (e.key) {
@@ -1112,7 +1310,7 @@ function onKeydown(e: KeyboardEvent) {
       break
     case 'r':
     case 'R':
-      reader.setDirection(reader.direction === 'ltr' ? 'rtl' : 'ltr')
+      cycleDirection()
       break
     case 'f':
     case 'F':
@@ -1205,7 +1403,8 @@ function onKeydown(e: KeyboardEvent) {
   border-radius: 4px;
 }
 
-.zoom-select {
+.zoom-select,
+.direction-select {
   /* 深色顶栏变体：透明底 + 半透明白描边，尺寸对齐相邻 .controls button */
   --select-height: 26px;
   --select-min-width: 104px;
@@ -1232,6 +1431,12 @@ function onKeydown(e: KeyboardEvent) {
   /* 隐藏滚动条（双页适高时水平滚动条白色轨道横在底部，影响阅读）：
      滚动能力保留，用拖拽平移 / 滚轮 / 方向键导航 */
   scrollbar-width: none;
+}
+
+/* 上→下：纵向视图是唯一滚动容器，外层不参与布局与滚动 */
+.page-area.is-vertical {
+  display: block;
+  overflow: hidden;
 }
 
 .page-area::-webkit-scrollbar {
