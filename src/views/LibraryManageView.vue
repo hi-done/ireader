@@ -321,6 +321,10 @@ onUnmounted(() => {
   width: 100%;
   max-width: 880px;
   min-height: calc(100vh - 72px);
+  /* 不参与收缩：本页滚动源是 .manage-view，页体一旦被 flex 压到视口高度，
+     下面的 .list-card（overflow: hidden，自动最小尺寸为 0）也会被压扁并把行裁掉，
+     整页既看不见剩余行、也没有可滚动高度（书多时列表无法下滑） */
+  flex-shrink: 0;
   margin: 0 auto;
   padding: 20px 40px 24px;
   display: flex;
