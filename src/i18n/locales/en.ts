@@ -178,9 +178,11 @@ export const en = {
   'reader.loadFailed': 'Unable to open this book: {message}',
   'reader.viewNotReady': 'Reader area is not ready',
   'reader.zipNoImages': 'No recognizable images in the archive',
+  'reader.mobiNoImages':
+    'No recognizable images in this MOBI (only image-based comic MOBI files are supported)',
   'reader.invalidBookId': 'Invalid book ID: {id}',
   'reader.epubLoadFailed': 'Failed to load EPUB (HTTP {status})',
-  'reader.cbzPageFailed': 'Failed to load comic page {page} (HTTP {status})',
+  'reader.pageImageFailed': 'Failed to load image page (HTTP {status})',
 
   // —— Reading statistics ——
   'stats.title': 'Reading stats',

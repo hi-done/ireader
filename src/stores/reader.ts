@@ -47,10 +47,12 @@ export const useReaderStore = defineStore('reader', () => {
 
     const result = await ipc.reader.open(id)
     bookId.value = id
-    if (result.format === 'cbz') {
-      // 页数来自导入时的图片条目统计；为 0 说明压缩包不可用，与 PDF 加载失败同样进错误页
-      if (result.numPages <= 0) throw new Error(t('reader.zipNoImages'))
-      doc.value = markRaw({ kind: 'cbz' as const, bookId: id })
+    if (result.format === 'cbz' || result.format === 'mobi') {
+      // 页数来自导入时的页表统计；为 0 说明无可用图片（文字型 / 加密 / 损坏），与 PDF 加载失败同样进错误页
+      if (result.numPages <= 0) {
+        throw new Error(t(result.format === 'mobi' ? 'reader.mobiNoImages' : 'reader.zipNoImages'))
+      }
+      doc.value = markRaw({ kind: 'image' as const, format: result.format, bookId: id })
       numPages.value = result.numPages
     } else {
       const loaded = await loadPdfWithTask(result.fileUrl)

@@ -2,7 +2,7 @@
 
 # 📚 IReader
 
-**纯离线的本地漫画阅读器（PDF / EPUB / CBZ）**
+**纯离线的本地漫画阅读器（PDF / EPUB / CBZ / MOBI）**
 
 导入 · 合集 · 沉浸阅读 · 断点续读 —— 你的漫画收藏，只属于你自己的电脑
 
@@ -26,7 +26,7 @@
 ## ✨ 功能亮点
 
 - 📴 **纯离线** — 零网络请求（设置页手动「检查更新」为唯一例外），书籍、封面与进度全部存于本机；`ireader://` 自定义协议按 id 分发文件，不暴露本地路径
-- 📚 **多格式支持** — 导入 PDF、EPUB 与 CBZ / ZIP 漫画包三种格式，共用文库、合集与断点续读；PDF 走 pdf.js canvas 渲染管线，EPUB 走 epub.js 分页排版（图片型漫画书双页并排，文字型书流式分页），CBZ / ZIP 由主进程按需解压、逐页供给图片并复用 PDF 全套翻页管线；同一套阅读偏好与快捷键
+- 📚 **多格式支持** — 导入 PDF、EPUB、CBZ / ZIP 漫画包与图片型漫画 MOBI 四种格式，共用文库、合集与断点续读；PDF 走 pdf.js canvas 渲染管线，EPUB 走 epub.js 分页排版（图片型漫画书双页并排，文字型书流式分页），CBZ / ZIP 与 MOBI 由主进程按需读取、逐页供给图片并复用 PDF 全套翻页管线；同一套阅读偏好与快捷键
 - 🌐 **三语界面** — 设置 → 通用 → 语言支持跟随系统 / 中文 / English / 日本語；切换即时生效、重启保持，日期、时长、复数与书名排序同步适配当前语言
 - 📖 **沉浸阅读** — 单页 / 双页排版，日漫（右→左）与韩漫（左→右）两种方向，canvas 自绘的仿真纸张卷曲翻页动画；纯黑视口贴满屏幕，顶底栏靠近边缘唤出、自动隐藏；适宽等长页支持滚轮连续滚动，贴边即翻页
 - 🔖 **断点续读** — 每本书独立记录页码、阅读模式、方向与缩放，重新打开即回到上次离开的位置
@@ -94,7 +94,7 @@
 
 #### 文库（主页）
 
-- **导入**：多选 PDF / EPUB / CBZ / ZIP 文件，或选择文件夹递归扫描（跳过隐藏目录与符号链接）；按规范化绝对路径去重，格式由扩展名自动识别；CBZ / ZIP 漫画包以内部图片文件名自然排序为阅读顺序
+- **导入**：多选 PDF / EPUB / CBZ / ZIP / MOBI 文件，或选择文件夹递归扫描（跳过隐藏目录与符号链接）；按规范化绝对路径去重，格式由扩展名自动识别；CBZ / ZIP 漫画包以内部图片文件名自然排序为阅读顺序，MOBI 以正文 `<img recindex>` 引用顺序为阅读顺序（无法解析时回退记录顺序）
 - **封面**：导入后由封面队列逐本渲染第 1 页落盘（480px JPEG），渐进上屏；失败显示占位图
 - **卡片**：封面、书名、阅读进度（百分比 + 进度条）、最近阅读时间
 - **排序**：最近阅读（默认）/ 添加时间 / 书名，偏好持久化
@@ -118,6 +118,7 @@
 - **渲染管线**：离屏 canvas → LRU 位图缓存（12 张，含渲染签名）→ 贴图上屏；后台按设置预取前后 0–4 组
 - **EPUB 阅读**：epub.js 分页排版；图片型漫画书双页并排贴中线（封面单页居中），缩放档位 50%–200%；文字型书流式分页 + 字号档位；断点续读恢复排版状态（单/双页、方向、字号/缩放）
 - **CBZ 阅读**：压缩包内图片按文件名自然排序逐页浏览（1 → 2 → 10，兼容零填充）；导入即统计页数、首页自动作封面；复用 PDF 的页组 / 缓存 / 动画全套管线
+- **MOBI 阅读**：自研零依赖解析（PalmDB 记录表 + MOBI 头 + EXTH + PalmDOC LZ77 解压），按正文图片引用顺序逐页浏览；导入即统计页数、首页自动作封面；与 CBZ 共用同一套图片页管线。当前范围仅限**图片型漫画 MOBI**，文字型（无内嵌图片）与加密 MOBI 打开时提示不支持
 - **性能保护**：滑块跨多页拖动零渲染开销（松手后并行渲染双页），作废渲染循环的迟到结果只入缓存不上屏
 
 #### 阅读统计
@@ -154,10 +155,11 @@
 | PDF 渲染 | pdfjs-dist 4.x（渲染进程 worker 解析 → canvas） |
 | EPUB 渲染 | epubjs 0.3.x（渲染进程解包 → 分页排版；图片型书自适应缩放） |
 | CBZ 渲染 | yauzl 3.x（主进程按需解压 zip 内图片，经 ireader://cbz/{id}/{page} 逐页供给） |
+| MOBI 解析 | 自研零依赖（PalmDB 记录偏移直读单条记录 + PalmDOC LZ77 解压，经 ireader://mobi/{id}/{page} 逐页供给） |
 | 数据库 | better-sqlite3 12.x（主进程内嵌 SQLite，WAL 模式） |
 | 界面语言 | 自研零依赖 i18n，三语词典类型同构；Intl 处理日期、时长与复数，Intl.Collator 排序 |
 | 打包 | electron-builder 26（macOS DMG / Windows NSIS） |
-| 测试 | Vitest 1.x（页组划分、封面队列、CBZ 排序与尺寸、滚轮滚动状态机、i18n 与排序等纯逻辑，218 个用例） |
+| 测试 | Vitest 1.x（页组划分、封面队列、CBZ 排序与尺寸、MOBI 解析内核、滚轮滚动状态机、i18n 与排序等纯逻辑，344 个用例） |
 
 ## 🧭 架构
 
@@ -168,12 +170,12 @@ Electron 双进程，前后端分离：
   文库 / 阅读器 / 设置 / 阅读统计 四路由
   PDF：pdf.js worker → 离屏 canvas → LRU 缓存 → 上屏
   EPUB：epub.js 解包 → 分页渲染（图片型书按 spine 页模型）
-  CBZ：逐页拉取压缩包内图片（主进程按需解压）→ 同 PDF canvas 管线
+  CBZ / MOBI：逐页拉取图片（主进程按需解压 / 解压文本 + 直读图片记录）→ 同 PDF canvas 管线
   i18n：三语词典 + Intl 格式化，locale 变更驱动全站重渲染
         ▲ IPC（contextBridge 类型安全 API，contextIsolation + sandbox）
 主进程（Node.js）
   文库 / 合集 / 进度 / 设置服务，封面落盘，日志
-  ireader:// 自定义协议（按 id 提供 PDF / EPUB / CBZ 页面与封面，不暴露文件路径）
+  ireader:// 自定义协议（按 id 提供 PDF / EPUB / CBZ / MOBI 页面与封面，不暴露文件路径）
         ▲
   {userData}/ireader.db（SQLite WAL）+ {userData}/covers/
 ```
@@ -187,7 +189,7 @@ Electron 双进程，前后端分离：
 └── build/             # 打包资源（icon 等）
 ```
 
-安全基线：渲染进程沙箱启用、`contextIsolation: true`、`nodeIntegration: false`；本地文件只能经 `ireader://pdf/{id}`、`ireader://epub/{id}`、`ireader://cbz/{id}/{page}`、`ireader://cover/{id}` 按 id 获取。
+安全基线：渲染进程沙箱启用、`contextIsolation: true`、`nodeIntegration: false`；本地文件只能经 `ireader://pdf/{id}`、`ireader://epub/{id}`、`ireader://cbz/{id}/{page}`、`ireader://mobi/{id}/{page}`、`ireader://cover/{id}` 按 id 获取。
 
 <details>
 <summary><b>🗄️ 数据模型（SQLite，增量迁移）</b></summary>

@@ -8,20 +8,22 @@ import { collectionsRepo } from '../db/repos/collectionsRepo'
 import { progressRepo, toReadingProgress } from '../db/repos/progressRepo'
 import type { Book } from '../../shared/types'
 import { getCoverUrl } from './coverService'
-import { countPages } from './cbzService'
+import { countPages as countCbzPages } from './cbzService'
+import { countPages as countMobiPages } from './mobiService'
 import * as logger from './logger'
 
-const SUPPORTED_EXTS = ['.pdf', '.epub', '.zip', '.cbz']
+const SUPPORTED_EXTS = ['.pdf', '.epub', '.zip', '.cbz', '.mobi']
 
 /** 按扩展名派生书格式（.zip/.cbz 归一为 cbz；未知扩展名按 PDF 处理，兼容旧数据） */
 export function detectFormat(filePath: string): Book['format'] {
   const ext = path.extname(filePath).toLowerCase()
   if (ext === '.epub') return 'epub'
   if (ext === '.zip' || ext === '.cbz') return 'cbz'
+  if (ext === '.mobi') return 'mobi'
   return 'pdf'
 }
 
-/** 递归展开文件/文件夹路径为去重后的 PDF/EPUB/CBZ 绝对路径列表 */
+/** 递归展开文件/文件夹路径为去重后的 PDF/EPUB/CBZ/MOBI 绝对路径列表 */
 function collectBookPaths(inputPaths: string[]): string[] {
   const result = new Set<string>()
 
@@ -73,9 +75,9 @@ function rowToBook(row: BookRow): Book {
 
 export const libraryService = {
   /**
-   * 导入文件/文件夹列表，递归扫描 PDF/EPUB/CBZ 并按路径去重落库。
+   * 导入文件/文件夹列表，递归扫描 PDF/EPUB/CBZ/MOBI 并按路径去重落库。
    * collectionId 非 null 时新导入的书直接归属该合集（合集视图内导入）。
-   * CBZ 在导入时统计图片条目数写入 total_pages，避免「封面队列未完成时打开页数为 0」竞态。
+   * CBZ/MOBI 在导入时统计图片页数写入 total_pages，避免「封面队列未完成时打开页数为 0」竞态。
    */
   async importPaths(
     inputPaths: string[],
@@ -95,14 +97,15 @@ export const libraryService = {
       }
       const stat = fs.statSync(filePath)
       const title = path.basename(filePath, path.extname(filePath))
+      const format = detectFormat(filePath)
       let totalPages = 0
-      if (detectFormat(filePath) === 'cbz') {
+      if (format === 'cbz' || format === 'mobi') {
         try {
-          totalPages = await countPages(filePath)
+          totalPages = await (format === 'cbz' ? countCbzPages(filePath) : countMobiPages(filePath))
         } catch (e) {
           // 统计失败不中止导入：书仍入库（0 页），由封面队列与打开时错误兜底
           logger.warn(
-            `[libraryService] cbz 页数统计失败：${filePath}（${e instanceof Error ? e.message : String(e)}）`
+            `[libraryService] ${format} 页数统计失败：${filePath}（${e instanceof Error ? e.message : String(e)}）`
           )
         }
       }

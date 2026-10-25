@@ -177,9 +177,10 @@ export const zhCN = {
   'reader.loadFailed': '无法打开本书：{message}',
   'reader.viewNotReady': '阅读区未就绪',
   'reader.zipNoImages': '压缩包中没有可识别的图片',
+  'reader.mobiNoImages': '此 MOBI 中没有可识别的图片（当前仅支持图片型漫画 MOBI）',
   'reader.invalidBookId': '无效的书籍 ID：{id}',
   'reader.epubLoadFailed': '加载 EPUB 失败（HTTP {status}）',
-  'reader.cbzPageFailed': '加载漫画第 {page} 页失败（HTTP {status}）',
+  'reader.pageImageFailed': '加载图片页失败（HTTP {status}）',
 
   // —— 阅读统计 ——
   'stats.title': '阅读统计',

@@ -1,4 +1,4 @@
-// ireader:// 自定义协议：向渲染进程提供 PDF/EPUB 原文件、CBZ 单页图片、封面图与 pdf.js 运行时资源
+// ireader:// 自定义协议：向渲染进程提供 PDF/EPUB 原文件、CBZ/MOBI 单页图片、封面图与 pdf.js 运行时资源
 // 对应设计文档 §3.4 / §6.5
 
 import { net, protocol } from 'electron'
@@ -8,7 +8,8 @@ import fs from 'node:fs'
 import { booksRepo } from '../db/repos/booksRepo'
 import { getCoverFilePath } from './coverService'
 import { detectFormat } from './libraryService'
-import { readPage } from './cbzService'
+import { readPage as readCbzPage } from './cbzService'
+import { readPage as readMobiPage } from './mobiService'
 import * as logger from './logger'
 
 export const IREADER_PROTOCOL = 'ireader'
@@ -54,28 +55,9 @@ export function registerProtocolHandler(): void {
       return servePdfjsAsset(url.pathname)
     }
 
-    // cbz 逐页供给：/cbz/{bookId}/{page}；须在通用 bookId 解析前分流（通用解析对 /123/45 得 NaN）
-    if (kind === 'cbz') {
-      const match = /^\/(\d+)\/(\d+)$/.exec(url.pathname)
-      if (!match) {
-        return new Response('Invalid cbz url', { status: 400 })
-      }
-      const bookId = Number(match[1])
-      const page = Number(match[2])
-      const row = booksRepo.findById(bookId)
-      if (!row || detectFormat(row.file_path) !== 'cbz' || !fs.existsSync(row.file_path)) {
-        return new Response('Not Found', { status: 404 })
-      }
-      try {
-        const p = await readPage(row.file_path, page)
-        if (!p) return new Response('Not Found', { status: 404 })
-        return withCors(new Response(p.data, { headers: { 'Content-Type': p.contentType } }))
-      } catch (e) {
-        logger.error(
-          `[protocol] cbz 解压失败 bookId=${bookId} page=${page}: ${e instanceof Error ? e.message : String(e)}`
-        )
-        return new Response('Bad cbz archive', { status: 500 })
-      }
+    // cbz / mobi 逐页供给：/cbz|mobi/{bookId}/{page}；须在通用 bookId 解析前分流（通用解析对 /123/45 得 NaN）
+    if (kind === 'cbz' || kind === 'mobi') {
+      return servePagedImage(kind, url, kind === 'cbz' ? readCbzPage : readMobiPage)
     }
 
     const bookId = Number(url.pathname.replace(/^\//, ''))
@@ -103,6 +85,40 @@ export function registerProtocolHandler(): void {
 
     return new Response('Not Found', { status: 404 })
   })
+}
+
+/**
+ * 逐页图片供给（cbz / mobi 共用）：URL 形如 /{bookId}/{page}，page 为 1 基阅读页码。
+ * 两个格式的单页读取函数签名一致，差异只在格式校验与错误语义文案。
+ */
+async function servePagedImage(
+  kind: 'cbz' | 'mobi',
+  url: URL,
+  readPage: (filePath: string, page: number) => Promise<{ data: Buffer; contentType: string } | null>
+): Promise<Response> {
+  const match = /^\/(\d+)\/(\d+)$/.exec(url.pathname)
+  if (!match) {
+    return new Response(`Invalid ${kind} url`, { status: 400 })
+  }
+  const bookId = Number(match[1])
+  const page = Number(match[2])
+  const row = booksRepo.findById(bookId)
+  if (!row || detectFormat(row.file_path) !== kind || !fs.existsSync(row.file_path)) {
+    return new Response('Not Found', { status: 404 })
+  }
+  try {
+    const p = await readPage(row.file_path, page)
+    if (!p) return new Response('Not Found', { status: 404 })
+    // Buffer 是 ArrayBufferLike 背景的视图，直接作为 BodyInit 时与 DOM 的 ArrayBufferView<ArrayBuffer> 不兼容，复制一份 Uint8Array
+    return withCors(
+      new Response(new Uint8Array(p.data), { headers: { 'Content-Type': p.contentType } })
+    )
+  } catch (e) {
+    logger.error(
+      `[protocol] ${kind} 读取失败 bookId=${bookId} page=${page}: ${e instanceof Error ? e.message : String(e)}`
+    )
+    return new Response(`Bad ${kind} file`, { status: 500 })
+  }
 }
 
 /**

@@ -1,5 +1,5 @@
 // 前端封面生成队列：导入后逐本渲染封面 → cover:submit 回传主进程落盘
-// PDF 用 pdf.js 渲染第 1 页；EPUB 用 epubjs 提取封面图；CBZ 拉取压缩包内第一张图
+// PDF 用 pdf.js 渲染第 1 页；EPUB 用 epubjs 提取封面图；CBZ / MOBI 拉取第 1 页内嵌图片
 // 对应设计文档 §4.1 / §8.1：队列空闲时执行、不阻塞 UI；失败的书使用占位封面，不影响阅读
 
 import { reactive } from 'vue'
@@ -7,7 +7,7 @@ import type { Book, BookFormat } from '../../shared/types'
 import { ipc } from './ipc'
 import { loadPdfWithTask, renderCoverThumbnail } from './pdf'
 
-/** 判断一本书是否需要生成封面（无封面即需要；页数不再作为判据——CBZ 导入时即已知页数，需照常生成封面） */
+/** 判断一本书是否需要生成封面（无封面即需要；页数不再作为判据——CBZ / MOBI 导入时即已知页数，需照常生成封面） */
 export function needsCoverGeneration(book: Pick<Book, 'coverUrl' | 'totalPages'>): boolean {
   return !book.coverUrl
 }
@@ -77,8 +77,8 @@ async function renderEpubCoverJpeg(url: string): Promise<ArrayBuffer> {
   }
 }
 
-/** 拉取 CBZ 第一页图片并转成 JPEG（缩到宽 480，只缩不放）；失败抛错走占位逻辑 */
-async function renderCbzCoverJpeg(url: string): Promise<ArrayBuffer> {
+/** 拉取图片型书（CBZ / MOBI）第 1 页并转成 JPEG（缩到宽 480，只缩不放）；失败抛错走占位逻辑 */
+async function renderImageCoverJpeg(url: string): Promise<ArrayBuffer> {
   const res = await fetch(url)
   if (!res.ok) throw new Error(`加载漫画首页失败（HTTP ${res.status}）`)
   const blob = new Blob([await res.arrayBuffer()], {
@@ -122,9 +122,9 @@ async function processOne(
       await ipc.cover.submit(bookId, image, 0)
       return
     }
-    if (format === 'cbz') {
-      const image = await renderCbzCoverJpeg(`ireader://cbz/${bookId}/1`)
-      // 页数已在导入时按条目统计入库，此处回写同值
+    if (format === 'cbz' || format === 'mobi') {
+      const image = await renderImageCoverJpeg(`ireader://${format}/${bookId}/1`)
+      // 页数已在导入时按图片页表统计入库，此处回写同值
       await ipc.cover.submit(bookId, image, totalPages)
       return
     }

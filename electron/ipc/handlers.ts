@@ -76,7 +76,7 @@ export function registerIpcHandlers(getWin: () => BrowserWindow | null): void {
     if (!win) return ok(null)
     const { canceled, filePaths } = await dialog.showOpenDialog(win, {
       properties: ['openFile', 'multiSelections'],
-      filters: [{ name: getBookFilesFilterName(), extensions: ['pdf', 'epub', 'zip', 'cbz'] }],
+      filters: [{ name: getBookFilesFilterName(), extensions: ['pdf', 'epub', 'zip', 'cbz', 'mobi'] }],
     })
     return ok(canceled ? null : filePaths)
   })

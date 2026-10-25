@@ -17,7 +17,7 @@ export type RowOrder = 'ltr' | 'rtl'
 export type ZoomMode = 'fitWidth' | 'fitHeight' | 'original' | 'custom'
 export type SortBy = 'lastOpenedAt' | 'addedAt' | 'title'
 export type SortOrder = 'asc' | 'desc'
-export type BookFormat = 'pdf' | 'epub' | 'cbz'
+export type BookFormat = 'pdf' | 'epub' | 'cbz' | 'mobi'
 
 export interface ReadingProgress {
   page: number // 当前页组第一页页码，从 1 起
@@ -122,7 +122,7 @@ export interface LibraryRemoveResult {
 
 export interface ReaderOpenResult {
   format: BookFormat
-  /** ireader://pdf/{id}、ireader://epub/{id}（直出原文件）或 ireader://cbz/{id}（逐页地址前缀） */
+  /** ireader://pdf/{id}、ireader://epub/{id}（直出原文件）或 ireader://cbz|mobi/{id}（逐页地址前缀） */
   fileUrl: string
   numPages: number
   progress: ReadingProgress | null

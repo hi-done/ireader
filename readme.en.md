@@ -2,7 +2,7 @@
 
 # 📚 IReader
 
-**A fully offline local manga reader (PDF / EPUB / CBZ)**
+**A fully offline local manga reader (PDF / EPUB / CBZ / MOBI)**
 
 Import · Collections · Immersive reading · Resume where you left off — your manga collection belongs to your computer alone
 
@@ -26,7 +26,7 @@ Import · Collections · Immersive reading · Resume where you left off — your
 ## ✨ Highlights
 
 - 📴 **Fully offline** — zero network requests (the manual "Check for updates" in Settings is the only exception); books, covers and progress stay on your machine. The custom `ireader://` protocol serves files by id without exposing local paths
-- 📚 **Multi-format** — import PDF, EPUB and CBZ / ZIP comic archives, all sharing the library, collections and resume support; PDF renders through the pdf.js canvas pipeline, EPUB uses epub.js pagination (image-based manga in side-by-side spreads, text-based books flow-paginated), CBZ / ZIP is unpacked on demand in the main process and reuses the entire PDF paging pipeline; one set of reading preferences and shortcuts
+- 📚 **Multi-format** — import PDF, EPUB, CBZ / ZIP comic archives and image-based comic MOBI files, all sharing the library, collections and resume support; PDF renders through the pdf.js canvas pipeline, EPUB uses epub.js pagination (image-based manga in side-by-side spreads, text-based books flow-paginated), CBZ / ZIP and MOBI are read on demand in the main process and served page by page, reusing the entire PDF paging pipeline; one set of reading preferences and shortcuts
 - 🌐 **Trilingual UI** — Settings → General → Language offers Follow system / 中文 / English / 日本語; changes take effect instantly and persist across restarts, with dates, durations, plurals and title sorting adapting to the current language
 - 📖 **Immersive reading** — single / double-page layouts, right-to-left (manga) and left-to-right (webtoon) directions, canvas-drawn paper-curl page animation; a pure-black viewport fills the screen while top and bottom bars appear near the edges and hide automatically; fit-width long pages support continuous wheel scrolling and turn the page at the edges
 - 🔖 **Resume anywhere** — every book independently records its page, reading mode, direction and zoom, so reopening returns to where you left off
@@ -94,7 +94,7 @@ Get the installer for your platform from the [**Releases**](../../releases) page
 
 #### Library (home)
 
-- **Import**: multi-select PDF / EPUB / CBZ / ZIP files, or pick a folder for recursive scanning (hidden directories and symlinks are skipped); duplicates are removed by normalized absolute path and the format is inferred from the extension; images inside CBZ / ZIP archives are read in natural filename order
+- **Import**: multi-select PDF / EPUB / CBZ / ZIP / MOBI files, or pick a folder for recursive scanning (hidden directories and symlinks are skipped); duplicates are removed by normalized absolute path and the format is inferred from the extension; images inside CBZ / ZIP archives are read in natural filename order, while MOBI pages follow the `<img recindex>` reference order in the text (falling back to record order when it cannot be parsed)
 - **Covers**: a cover queue renders page 1 of each book to disk (480px JPEG) and fills in progressively; failures show a placeholder
 - **Cards**: cover, title, reading progress (percentage + bar) and last-read time
 - **Sorting**: recently read (default) / date added / title, with the preference persisted
@@ -118,6 +118,7 @@ Get the installer for your platform from the [**Releases**](../../releases) page
 - **Render pipeline**: offscreen canvas → LRU bitmap cache (12 entries with render signatures) → blit to screen; 0–4 adjacent spreads prefetched in the background per Settings
 - **EPUB reading**: epub.js pagination; image-based manga books show side-by-side spreads aligned to the center (single cover centered), zoom 50%–200%; text-based books flow-paginate with font-size steps; resume restores layout state (single/double page, direction, font size / zoom)
 - **CBZ reading**: images inside the archive are browsed in natural filename order (1 → 2 → 10, zero padding supported); page count is known on import and the first page becomes the cover; reuses the full PDF spread / cache / animation pipeline
+- **MOBI reading**: a self-contained zero-dependency parser (PalmDB record table + MOBI header + EXTH + PalmDOC LZ77 decompression) browses pages in the order the text references them; page count is known on import and the first page becomes the cover; shares the same image-page pipeline as CBZ. The scope is limited to **image-based comic MOBI** — text-only and encrypted MOBI files report that they are unsupported when opened
 - **Performance guards**: dragging the slider across many pages costs no rendering (both pages render in parallel on release); late results from invalidated render loops are cached but never blitted
 
 #### Reading stats
@@ -154,10 +155,11 @@ The Data group in Settings provides the reading statistics entry; the About grou
 | PDF rendering | pdfjs-dist 4.x (parsed by a renderer worker → canvas) |
 | EPUB rendering | epubjs 0.3.x (unpacked in the renderer → pagination; adaptive scaling for image-based books) |
 | CBZ rendering | yauzl 3.x (unpacks zip images on demand in the main process, served per page via ireader://cbz/{id}/{page}) |
+| MOBI parsing | Self-contained, zero dependencies (reads a single record straight from the PalmDB offset table, PalmDOC LZ77 decompression, served per page via ireader://mobi/{id}/{page}) |
 | Database | better-sqlite3 12.x (embedded SQLite in the main process, WAL mode) |
 | UI language | Self-built zero-dependency i18n with type-isomorphic dictionaries; Intl for dates, durations and plurals, Intl.Collator for sorting |
 | Packaging | electron-builder 26 (macOS DMG / Windows NSIS) |
-| Testing | Vitest 1.x (pure logic: spread building, cover queue, CBZ ordering and sizing, wheel-scroll state machine, i18n and sorting — 218 cases) |
+| Testing | Vitest 1.x (pure logic: spread building, cover queue, CBZ ordering and sizing, the MOBI parser core, wheel-scroll state machine, i18n and sorting — 344 cases) |
 
 ## 🧭 Architecture
 
@@ -168,12 +170,12 @@ Renderer (Vue 3 SPA)
   Library / Reader / Settings / Stats — four routes
   PDF: pdf.js worker → offscreen canvas → LRU cache → blit
   EPUB: epub.js unpack → paginated rendering (spine page model for image-based books)
-  CBZ: fetch images page by page (unpacked on demand in main) → same canvas pipeline as PDF
+  CBZ / MOBI: fetch images page by page (unpacked on demand / text decompressed + image records read directly in main) → same canvas pipeline as PDF
   i18n: trilingual dictionaries + Intl formatting; locale changes re-render the whole UI
         ▲ IPC (type-safe contextBridge API, contextIsolation + sandbox)
 Main process (Node.js)
   Library / collections / progress / settings services, cover files, logging
-  ireader:// custom protocol (serves PDF / EPUB / CBZ pages and covers by id, never exposing file paths)
+  ireader:// custom protocol (serves PDF / EPUB / CBZ / MOBI pages and covers by id, never exposing file paths)
         ▲
   {userData}/ireader.db (SQLite WAL) + {userData}/covers/
 ```
@@ -187,7 +189,7 @@ Main process (Node.js)
 └── build/             # Packaging assets (icons, etc.)
 ```
 
-Security baseline: the renderer is sandboxed with `contextIsolation: true` and `nodeIntegration: false`; local files are only reachable by id through `ireader://pdf/{id}`, `ireader://epub/{id}`, `ireader://cbz/{id}/{page}` and `ireader://cover/{id}`.
+Security baseline: the renderer is sandboxed with `contextIsolation: true` and `nodeIntegration: false`; local files are only reachable by id through `ireader://pdf/{id}`, `ireader://epub/{id}`, `ireader://cbz/{id}/{page}`, `ireader://mobi/{id}/{page}` and `ireader://cover/{id}`.
 
 <details>
 <summary><b>🗄️ Data model (SQLite, incremental migrations)</b></summary>

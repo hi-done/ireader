@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { needsCoverGeneration, pickPendingCoverIds } from './coverQueue'
 
 describe('needsCoverGeneration', () => {
-  it('无封面则生成（与页数无关：CBZ 导入即已知页数）', () => {
+  it('无封面则生成（与页数无关：CBZ/MOBI 导入即已知页数）', () => {
     expect(needsCoverGeneration({ coverUrl: null, totalPages: 0 })).toBe(true)
     expect(needsCoverGeneration({ coverUrl: null, totalPages: 128 })).toBe(true)
   })
@@ -30,5 +30,10 @@ describe('pickPendingCoverIds', () => {
 
   it('空列表返回空数组', () => {
     expect(pickPendingCoverIds([])).toEqual([])
+  })
+
+  it('MOBI 书无封面时照常入队（与 CBZ 同口径）', () => {
+    const books = [{ id: 9, coverUrl: null, totalPages: 42 }]
+    expect(pickPendingCoverIds(books)).toEqual([9])
   })
 })

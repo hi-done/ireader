@@ -178,9 +178,11 @@ export const ja = {
   'reader.loadFailed': 'この本を開けません：{message}',
   'reader.viewNotReady': '閲覧エリアの準備ができていません',
   'reader.zipNoImages': 'アーカイブに認識可能な画像がありません',
+  'reader.mobiNoImages':
+    'この MOBI に認識可能な画像がありません（現在は画像ベースのマンガ MOBI のみ対応）',
   'reader.invalidBookId': '無効な書籍 ID：{id}',
   'reader.epubLoadFailed': 'EPUB の読み込みに失敗しました（HTTP {status}）',
-  'reader.cbzPageFailed': 'マンガ {page} ページの読み込みに失敗しました（HTTP {status}）',
+  'reader.pageImageFailed': '画像ページの読み込みに失敗しました（HTTP {status}）',
 
   // —— 読書統計 ——
   'stats.title': '読書統計',
