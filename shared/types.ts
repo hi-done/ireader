@@ -114,6 +114,12 @@ export interface LibraryImportResult {
   skipped: number
 }
 
+/** 批量移除结果（library:removeMany 返回） */
+export interface LibraryRemoveResult {
+  /** 实际被移除的书 id；库中不存在的 id 被忽略，供渲染层精确同步本地列表与计数 */
+  removed: number[]
+}
+
 export interface ReaderOpenResult {
   format: BookFormat
   /** ireader://pdf/{id}、ireader://epub/{id}（直出原文件）或 ireader://cbz/{id}（逐页地址前缀） */

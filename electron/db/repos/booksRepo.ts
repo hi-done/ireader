@@ -79,6 +79,15 @@ export const booksRepo = {
     getDatabase().prepare('DELETE FROM books WHERE id = ?').run(id)
   },
 
+  /** 批量删除书行（单事务；阅读进度 / 统计由外键 ON DELETE CASCADE 清理） */
+  removeMany(ids: number[]): void {
+    const stmt = getDatabase().prepare('DELETE FROM books WHERE id = ?')
+    const tx = getDatabase().transaction(() => {
+      for (const id of ids) stmt.run(id)
+    })
+    tx()
+  },
+
   /** 批量移动书至合集（collectionId = NULL 表示移回未分组） */
   moveToCollection(ids: number[], collectionId: number | null): void {
     const stmt = getDatabase().prepare('UPDATE books SET collection_id = ? WHERE id = ?')

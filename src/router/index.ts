@@ -24,6 +24,11 @@ const router = createRouter({
       name: 'stats',
       component: () => import('../views/ReadingStatsView.vue'),
     },
+    {
+      path: '/manage',
+      name: 'manage',
+      component: () => import('../views/LibraryManageView.vue'),
+    },
   ],
 })
 

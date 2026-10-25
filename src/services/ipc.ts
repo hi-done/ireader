@@ -38,6 +38,8 @@ export const ipc = {
     list: () => unwrap(api().library.list()),
     remove: (bookId: number, deleteFile?: boolean) =>
       unwrap(api().library.remove(bookId, deleteFile)),
+    removeMany: (bookIds: number[], deleteFile?: boolean) =>
+      unwrap(api().library.removeMany(bookIds, deleteFile)),
     relink: (bookId: number, newPath: string) => unwrap(api().library.relink(bookId, newPath)),
     rename: (bookId: number, title: string) => unwrap(api().library.rename(bookId, title)),
     moveToCollection: (bookIds: number[], collectionId: number | null) =>

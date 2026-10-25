@@ -5,6 +5,7 @@ import type {
   Collection,
   LibraryChangedPayload,
   LibraryImportResult,
+  LibraryRemoveResult,
   ReaderOpenResult,
   ReadingProgress,
   ReadingStatsSummary,
@@ -33,6 +34,8 @@ const ireaderApi = {
     list: (): Promise<Result<Book[]>> => ipcRenderer.invoke('library:list'),
     remove: (bookId: number, deleteFile?: boolean): Promise<Result<void>> =>
       ipcRenderer.invoke('library:remove', { bookId, deleteFile }),
+    removeMany: (bookIds: number[], deleteFile?: boolean): Promise<Result<LibraryRemoveResult>> =>
+      ipcRenderer.invoke('library:removeMany', { bookIds, deleteFile }),
     relink: (bookId: number, newPath: string): Promise<Result<Book>> =>
       ipcRenderer.invoke('library:relink', { bookId, newPath }),
     rename: (bookId: number, title: string): Promise<Result<Book>> =>

@@ -114,6 +114,17 @@ export const useLibraryStore = defineStore('library', () => {
     books.value = books.value.filter((b) => b.id !== bookId)
   }
 
+  /**
+   * 批量移除：本地只做集合过滤；library:changed 仍会驱动其他视图 silent refresh。
+   * @returns 实际移除的书 id（部分书可能已被别处删除）
+   */
+  async function removeMany(bookIds: number[], deleteFile = false): Promise<number[]> {
+    const { removed } = await ipc.library.removeMany(bookIds, deleteFile)
+    const idSet = new Set(removed)
+    books.value = books.value.filter((b) => !idSet.has(b.id))
+    return removed
+  }
+
   async function rename(bookId: number, title: string) {
     const updated = await ipc.library.rename(bookId, title)
     const idx = books.value.findIndex((b) => b.id === bookId)
@@ -150,6 +161,7 @@ export const useLibraryStore = defineStore('library', () => {
     refresh,
     importPaths,
     remove,
+    removeMany,
     rename,
     relink,
     createCollection,

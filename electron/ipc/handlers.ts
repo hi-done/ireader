@@ -23,6 +23,7 @@ import {
   type CaptureRegionRect,
   type Direction,
   type LibraryChangedPayload,
+  type LibraryRemoveResult,
   type ReadingProgress,
   type Result,
   type Settings,
@@ -133,6 +134,19 @@ export function registerIpcHandlers(getWin: () => BrowserWindow | null): void {
       libraryService.remove(bookId, Boolean(deleteFile))
       removeCover(bookId)
       notifyLibraryChanged(getWin(), { type: 'removed', bookIds: [bookId] })
+    })
+  )
+
+  ipcMain.handle(
+    'library:removeMany',
+    wrap(({ bookIds, deleteFile }: { bookIds: number[]; deleteFile?: boolean }) => {
+      // 校验与文件处置在 service，handler 只编排与广播；零变化不打扰其他视图 refresh
+      const removed = libraryService.removeMany(Array.isArray(bookIds) ? bookIds : [], Boolean(deleteFile))
+      if (removed.length) {
+        for (const id of removed) removeCover(id)
+        notifyLibraryChanged(getWin(), { type: 'removed', bookIds: removed })
+      }
+      return { removed } satisfies LibraryRemoveResult
     })
   )
 

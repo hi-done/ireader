@@ -87,6 +87,23 @@
               </svg>
             </span>
           </button>
+          <!-- 漫画批量管理：列表 / 筛选 / 批量删除独立页（specs/漫画批量管理设计方案-20261025.md §9.1） -->
+          <button class="row row-link" @click="router.push('/manage')">
+            <span class="row-label">{{ t('settings.data.manage') }}</span>
+            <span class="row-value">
+              {{ t('settings.data.manageHint') }}
+              <svg class="chevron" width="7" height="12" viewBox="0 0 7 12" aria-hidden="true">
+                <path
+                  d="M1 1 L6 6 L1 11"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.6"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                />
+              </svg>
+            </span>
+          </button>
         </div>
       </section>
 
@@ -363,8 +380,12 @@ function retry() {
   overflow-wrap: break-word;
 }
 
-/* 「数据」分组入口行：整行可点，负边距撑满卡片宽度 */
+/* 「数据」分组入口行：整行可点，负边距撑满卡片宽度（点击热区覆盖卡片内边距） */
 .row-link {
+  position: relative;
+  /* 建立独立层叠上下文：悬停浮层靠 z-index:-1 垫到文字下方，
+     否则会下沉到卡片背景之下或（无此声明时）盖到文字之上 */
+  isolation: isolate;
   width: calc(100% + 40px);
   margin: 0 -20px;
   padding: 13px 20px;
@@ -375,7 +396,52 @@ function retry() {
   cursor: pointer;
 }
 
+/* 悬停灰底改由内嵌浮层绘制：左右各内缩 4px，上下由卡片 4px 内边距提供，
+   使高亮距卡片边框四周等距；直接给按钮上底色会左右贴边、与上下留白不对称 */
+.row-link::before {
+  content: '';
+  position: absolute;
+  inset: 0 4px;
+  border-radius: 8px;
+  background: transparent;
+  /* 置于本行文字之下（按钮已 isolation，不会继续下沉） */
+  z-index: -1;
+  transition: background-color 0.15s ease;
+  pointer-events: none;
+}
+
+/* 分割线两侧再让出 4px：相邻行的高亮不贴线，形成独立圆角胶囊
+   （上方有线的行让 top，下方有线的行让 bottom，末行首行自然只剩卡片内边距） */
+.row-link:not(:first-child)::before {
+  top: 4px;
+}
+
+.row-link:not(:last-child)::before {
+  bottom: 4px;
+}
+
+/* 非末行不用按钮自带下边框：全宽按钮的 1px 边框会通栏贴到卡片边框，且两端随
+   border-radius 起翘；改由 ::after 画与其它分组同规格的发丝线（20px 内缩、直角端点） */
+.row-link:not(:last-child) {
+  border-bottom: none;
+}
+
+.row-link:not(:last-child)::after {
+  content: '';
+  position: absolute;
+  left: 20px;
+  right: 20px;
+  bottom: 0;
+  height: 1px;
+  background: var(--border);
+}
+
+/* 覆盖全局 button:hover 的整块底色，只保留内缩浮层 */
 .row-link:hover {
+  background: transparent;
+}
+
+.row-link:hover::before {
   background: var(--surface-2);
 }
 

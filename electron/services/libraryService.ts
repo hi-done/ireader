@@ -142,6 +142,37 @@ export const libraryService = {
     }
   },
 
+  /**
+   * 批量移除书籍：按存在性过滤后单事务删库，事务提交后再删文件（反序会在 DB 失败时已不可恢复地删掉文件）。
+   * @param ids 待移除书 id（调用方已做非空 / 正整数过滤）
+   * @param deleteFile 是否同时删除磁盘原文件
+   * @returns 实际移除的 id 列表（库中不存在的 id 被忽略）
+   */
+  removeMany(ids: number[], deleteFile: boolean): number[] {
+    // 只保留正整数 id（脏值过滤而非报错，避免一批里一个坏 id 拖垮整批），去重后为空则拒绝
+    const uniqueIds = [...new Set(ids.filter((id) => Number.isInteger(id) && id > 0))]
+    if (!uniqueIds.length) throw { code: 'INVALID_PARAMS', message: 'bookIds 不能为空' }
+    const rows = uniqueIds
+      .map((id) => booksRepo.findById(id))
+      .filter((row): row is BookRow => Boolean(row))
+    if (!rows.length) return []
+
+    booksRepo.removeMany(rows.map((row) => row.id)) // 进度 / 统计随外键级联清理
+    if (deleteFile) {
+      for (const row of rows) {
+        // 单本失败不中断整批：记录已删，残留文件可手工清理
+        try {
+          if (fs.existsSync(row.file_path)) fs.unlinkSync(row.file_path)
+        } catch (e) {
+          logger.warn(
+            `[libraryService] 删除文件失败：${row.file_path}（${e instanceof Error ? e.message : String(e)}）`
+          )
+        }
+      }
+    }
+    return rows.map((row) => row.id)
+  },
+
   relink(id: number, newPath: string): Book | undefined {
     const real = fs.realpathSync(newPath)
     const stat = fs.statSync(real)
