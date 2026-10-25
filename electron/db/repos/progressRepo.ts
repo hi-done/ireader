@@ -18,6 +18,14 @@ export interface ProgressRow {
   row_order: RowOrder | null
 }
 
+/** 方向同步用精简行：只读判定所需字段，避免把整行进度带进内存 */
+export interface DirectionSyncRow {
+  book_id: number
+  page: number
+  percentage: number | null
+  direction: Direction
+}
+
 export const progressRepo = {
   findByBookId(bookId: number): ProgressRow | undefined {
     return getDatabase()
@@ -47,6 +55,23 @@ export const progressRepo = {
         percentage: progress.percentage ?? null,
         rowOrder: progress.rowOrder ?? 'ltr',
       })
+  },
+
+  /** 列出全部进度的方向判定字段（默认方向同步用：书数量级小，一次性读取后在事务内过滤） */
+  listForDirectionSync(): DirectionSyncRow[] {
+    return getDatabase()
+      .prepare('SELECT book_id, page, percentage, direction FROM reading_progress')
+      .all() as DirectionSyncRow[]
+  },
+
+  /**
+   * 仅更新方向列：page / mode / zoom / cfi / percentage / updated_at 一律不动。
+   * 不复用 upsert——那会整行覆盖，把方向同步写成一次「假阅读」。
+   */
+  updateDirection(bookId: number, direction: Direction): void {
+    getDatabase()
+      .prepare('UPDATE reading_progress SET direction = ? WHERE book_id = ?')
+      .run(direction, bookId)
   },
 }
 

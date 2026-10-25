@@ -233,3 +233,14 @@ export function formatDayKey(date: Date): string {
   const d = String(date.getDate()).padStart(2, '0')
   return `${y}-${m}-${d}`
 }
+
+/**
+ * 是否为零进度（默认阅读方向同步口径，双进程共用）。
+ * 口径按「当前位置」而非「是否读过」：停在第一页且无百分比即视为零进度，
+ * 因此翻回首页的已读书也会被判为零进度，后续修改默认方向会被覆盖
+ * （详见 specs/默认阅读方向同步零进度书设计方案-20261025.md §十三）。
+ */
+export function isUnstartedProgress(page: number, percentage?: number | null): boolean {
+  if (page > 1) return false
+  return percentage == null || percentage <= 0
+}

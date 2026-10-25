@@ -10,6 +10,7 @@ import * as logger from '../services/logger'
 import { booksRepo } from '../db/repos/booksRepo'
 import { progressRepo } from '../db/repos/progressRepo'
 import { settingsRepo } from '../db/repos/settingsRepo'
+import { settingsService } from '../services/settingsService'
 import { statsService } from '../services/statsService'
 import { updaterService } from '../services/updaterService'
 import { getBookFilesFilterName } from '../services/appLocale'
@@ -20,9 +21,11 @@ import {
   LOCALE_PREFERENCES,
   type AppError,
   type CaptureRegionRect,
+  type Direction,
   type LibraryChangedPayload,
   type ReadingProgress,
   type Result,
+  type Settings,
 } from '../../shared/types'
 
 /** 统一包裹 handler：抹掉 IpcMainInvokeEvent 首参，捕获异常并转换为 Result<T> */
@@ -62,6 +65,9 @@ function wrapAsync<Args extends unknown[], T>(
 function notifyLibraryChanged(win: BrowserWindow | null, payload: LibraryChangedPayload) {
   win?.webContents.send('library:changed', payload)
 }
+
+/** 阅读方向白名单：Direction 是字面量联合无运行期值，校验需本地数组 */
+const VALID_DIRECTIONS: Direction[] = ['ltr', 'rtl', 'ttb']
 
 export function registerIpcHandlers(getWin: () => BrowserWindow | null): void {
   ipcMain.handle('dialog:pickBookFiles', async () => {
@@ -198,12 +204,20 @@ export function registerIpcHandlers(getWin: () => BrowserWindow | null): void {
 
   ipcMain.handle(
     'settings:patch',
-    wrap((partial: Parameters<typeof settingsRepo.patch>[0]) => {
+    wrap((partial: Partial<Settings>) => {
       // locale 白名单校验：阻止持久化脏值导致渲染层词典查找失败
       if (partial.locale !== undefined && !LOCALE_PREFERENCES.includes(partial.locale)) {
         throw { code: 'INVALID_PARAMS', message: 'locale 取值无效' } as AppError
       }
-      return settingsRepo.patch(partial)
+      // 方向白名单：EPUB 侧会把非法方向静默归一成 ltr，写库前拦掉更可控
+      if (
+        partial.defaultDirection !== undefined &&
+        !VALID_DIRECTIONS.includes(partial.defaultDirection)
+      ) {
+        throw { code: 'INVALID_PARAMS', message: 'defaultDirection 取值无效' } as AppError
+      }
+      // 方向变更的零进度书同步在 service 内与设置写入同事务完成
+      return settingsService.patch(partial)
     })
   )
 
