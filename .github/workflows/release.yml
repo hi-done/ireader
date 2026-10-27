@@ -137,12 +137,20 @@ jobs:
       - name: 发布到 GitHub Releases
         uses: softprops/action-gh-release@v3
         with:
+          # 匹配式必须用 ** 递归：upload-artifact 的规则是「通配符之后的层级原样保留」，
+          # build 里写的 release/*/*.dmg 第一个通配符就是版本目录，所以 artifact 内部
+          # 条目是 1.4.0/IReader-1.4.0-mac.dmg 这种带版本子目录的形状，解压到 artifacts/
+          # 后为 artifacts/1.4.0/*。v1.4.0 实测：这里误写成平铺的 artifacts/*.dmg，
+          # 五条 glob 全部零匹配，而本 action 零匹配只打 ⚠️ 不报错，于是 job 全绿、
+          # Release 照常 created + published，却只挂着 GitHub 自动生成的源码包
           files: |
-            artifacts/*.dmg
-            artifacts/IReader-*-win.exe
-            artifacts/IReader-*-win.exe.blockmap
-            artifacts/latest.yml
-            artifacts/latest-mac.yml
+            artifacts/**/*.dmg
+            artifacts/**/IReader-*-win.exe
+            artifacts/**/IReader-*-win.exe.blockmap
+            artifacts/**/latest.yml
+            artifacts/**/latest-mac.yml
+          # 任一匹配式零命中即失败，杜绝「构建成功但 Release 零产物」的静默形态
+          fail_on_unmatched_files: true
           # 本步骤全程只执行一次，直接开启生成说明；旧写法两个矩阵任务各开一次会把
           # 同一段说明叠加两遍（实测 v1.2.0 / v1.2.1 的 Full Changelog 段重复），
           # 当时靠 runner.os == 'Windows' 规避，现随发布收口一并去掉
