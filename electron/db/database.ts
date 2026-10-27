@@ -7,6 +7,17 @@ import fs from 'node:fs'
 
 let db: Database.Database | null = null
 
+/**
+ * 判断表是否已有指定列。
+ * SQLite 的 ALTER TABLE ADD COLUMN 不幂等：进程若在「列已提交、user_version 未写入」之间被强杀，
+ * 下次启动会重复执行同一迁移并抛 duplicate column name，导致 initDatabase 失败、窗口永不创建。
+ * 因此每条 ADD COLUMN 迁移都要先查列、已存在则跳过，让半迁移状态能自愈。
+ */
+function hasColumn(db: Database.Database, table: string, column: string): boolean {
+  const columns = db.pragma(`table_info(${table})`) as Array<{ name: string }>
+  return columns.some((c) => c.name === column)
+}
+
 const MIGRATIONS: Array<(db: Database.Database) => void> = [
   // v1: 初始建表
   (db) => {
@@ -49,19 +60,21 @@ const MIGRATIONS: Array<(db: Database.Database) => void> = [
         title      TEXT    NOT NULL,
         created_at INTEGER NOT NULL
       );
-
-      ALTER TABLE books ADD COLUMN collection_id INTEGER REFERENCES collections(id);
-
-      CREATE INDEX IF NOT EXISTS idx_books_collection ON books(collection_id);
     `)
+    if (!hasColumn(db, 'books', 'collection_id')) {
+      db.exec('ALTER TABLE books ADD COLUMN collection_id INTEGER REFERENCES collections(id);')
+    }
+    db.exec('CREATE INDEX IF NOT EXISTS idx_books_collection ON books(collection_id);')
   },
 
   // v3: EPUB 阅读进度（CFI 定位 + 百分比；PDF 书两列保持 NULL）
   (db) => {
-    db.exec(`
-      ALTER TABLE reading_progress ADD COLUMN cfi TEXT;
-      ALTER TABLE reading_progress ADD COLUMN percentage REAL;
-    `)
+    if (!hasColumn(db, 'reading_progress', 'cfi')) {
+      db.exec('ALTER TABLE reading_progress ADD COLUMN cfi TEXT;')
+    }
+    if (!hasColumn(db, 'reading_progress', 'percentage')) {
+      db.exec('ALTER TABLE reading_progress ADD COLUMN percentage REAL;')
+    }
   },
 
   // v4: 阅读时长统计（日粒度聚合：每本书每天一行，毫秒累加；删书级联清除）
@@ -81,7 +94,9 @@ const MIGRATIONS: Array<(db: Database.Database) => void> = [
 
   // v5: 纵向双页行内页序（ltr / rtl；NULL 视为左→右）
   (db) => {
-    db.exec(`ALTER TABLE reading_progress ADD COLUMN row_order TEXT;`)
+    if (!hasColumn(db, 'reading_progress', 'row_order')) {
+      db.exec('ALTER TABLE reading_progress ADD COLUMN row_order TEXT;')
+    }
   },
 ]
 
@@ -100,10 +115,15 @@ export function initDatabase(userDataDir: string): Database.Database {
   instance.pragma('foreign_keys = ON')
 
   const currentVersion = instance.pragma('user_version', { simple: true }) as number
-  for (let v = currentVersion; v < MIGRATIONS.length; v++) {
-    MIGRATIONS[v](instance)
-  }
-  instance.pragma(`user_version = ${MIGRATIONS.length}`)
+  // 迁移与版本号写入必须同一事务：否则中途被强杀会留下「schema 已改、user_version 未涨」的
+  // 半迁移状态（SQLite 的 DDL 本身是事务性的，这里只是把两者绑到一起）
+  const migrate = instance.transaction(() => {
+    for (let v = currentVersion; v < MIGRATIONS.length; v++) {
+      MIGRATIONS[v](instance)
+    }
+    instance.pragma(`user_version = ${MIGRATIONS.length}`)
+  })
+  migrate()
 
   db = instance
   return db
