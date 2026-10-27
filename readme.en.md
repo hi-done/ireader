@@ -28,7 +28,7 @@ Import · Collections · Immersive reading · Resume where you left off — your
 - 📴 **Fully offline** — zero network requests (the manual "Check for updates" in Settings is the only exception); books, covers and progress stay on your machine. The custom `ireader://` protocol serves files by id without exposing local paths
 - 📚 **Multi-format** — import PDF, EPUB, CBZ / ZIP comic archives and image-based comic MOBI files, all sharing the library, collections and resume support; PDF renders through the pdf.js canvas pipeline, EPUB uses epub.js pagination (image-based manga in side-by-side spreads, text-based books flow-paginated), CBZ / ZIP and MOBI are read on demand in the main process and served page by page, reusing the entire PDF paging pipeline; one set of reading preferences and shortcuts
 - 🌐 **Trilingual UI** — Settings → General → Language offers Follow system / 中文 / English / 日本語; changes take effect instantly and persist across restarts, with dates, durations, plurals and title sorting adapting to the current language
-- 📖 **Immersive reading** — single / double-page layouts, right-to-left (manga) and left-to-right (webtoon) directions, canvas-drawn paper-curl page animation; a pure-black viewport fills the screen while top and bottom bars appear near the edges and hide automatically; fit-width long pages support continuous wheel scrolling and turn the page at the edges
+- 📖 **Immersive reading** — single / double-page layouts with three directions: right-to-left (manga), left-to-right (webtoon) and top-to-bottom (strip comics) — the two horizontal directions use the canvas-drawn paper-curl animation, while top-to-bottom switches to continuous vertical scrolling with a fixed 16px gap and no page-turn animation; a pure-black viewport fills the screen while top and bottom bars appear near the edges and hide automatically; fit-width long pages support continuous wheel scrolling and turn the page at the edges
 - 🔖 **Resume anywhere** — every book independently records its page, reading mode, direction and zoom, so reopening returns to where you left off
 - 🗂️ **Collections** — organize manga by series; a book belongs to exactly one collection at a time; import straight into a collection, or fuzzy-search from the home page and select all
 - 📊 **Reading stats** — total time, today's reading and streak at a glance, with 7 / 30-day bar charts and a book ranking; time is tracked automatically and the ranking switches between today / all time
@@ -85,7 +85,7 @@ Get the installer for your platform from the [**Releases**](../../releases) page
 | Page scroll / edge turn | `Wheel` scrolls the content first; keep scrolling at the top / bottom to turn the page (when fit-width content exceeds one screen) |
 | Horizontal pan | `Shift+Wheel` (wheel down pans right, up pans left; switches to vertical scrolling at the far left / right edge) |
 | Single / double page | `D` |
-| Toggle reading direction | `R` |
+| Toggle reading direction | `R` (left→right → right→left → top→bottom) |
 | Zoom in / out | `Cmd/Ctrl+=` / `Cmd/Ctrl+-`, `Cmd/Ctrl+Wheel` |
 | Fullscreen | `F` or the toolbar button; `Esc` exits fullscreen / returns to the library |
 
@@ -112,6 +112,7 @@ Get the installer for your platform from the [**Releases**](../../releases) page
 
 - **Spreads**: single page `[1][2][3]…`; double page puts the cover alone by default `[1][2,3][4,5]…` (can be disabled in Settings)
 - **Direction**: RTL (manga) puts page 1 on the right of a spread; LTR (webtoon) puts it on the left; click zones mirror with the direction (arrow keys keep fixed semantics, see Shortcuts)
+- **Continuous vertical scroll** (top-to-bottom): pages stack vertically with a fixed 16px gap between rows (0 inside a double-page row, both pages vertically centered) and no page-turn animation; only pages near the viewport are mounted and rendered, the wheel / trackpad scrolls continuously, and keys, click zones, the slider and the step buttons jump instantly; progress is saved about 1s after scrolling stops, so reopening returns to the same row; the in-row page order follows the horizontal direction used before switching (left-to-right by default); text-based EPUB books use the epub.js continuous flow, which is forced to a single column, so the double-page button is disabled with a hint
 - **Zoom**: fit width / fit height (default, pages fill the viewport) / original 100% / custom 25%–400% (`Ctrl/Cmd+Wheel` or `=`/`-` in 10% steps); drag to pan when larger than the viewport
 - **Page animation**: a canvas-drawn paper curl (450ms, with fold shadow and paper-edge highlight); rapid turns cancel the previous layer and `prefers-reduced-motion` is respected
 - **Wheel reading**: when fit-width or custom zoom makes a page taller than the viewport, the wheel scrolls the content first and turns the page after another ~80px at the top / bottom, aligning to the page start when moving forward and the page end when moving back; `Shift+Wheel` pans horizontally (down → right, up → left) and switches to vertical scrolling at the edges, where page turns work the same way; without horizontal overflow it behaves like a normal wheel
@@ -135,7 +136,7 @@ Get the installer for your platform from the [**Releases**](../../releases) page
 | --- | --- | --- |
 | Interface language | Follow system / 中文 / English / 日本語 | Follow system |
 | Default reading mode | Single / double page | Single page |
-| Default reading direction | LTR / RTL | RTL |
+| Default reading direction | Left→right (LTR) / right→left (RTL) / top→bottom (TTB) | RTL |
 | Theme | Light / dark / follow system | Follow system |
 | Preloaded spreads | 0–4 | 2 |
 | Double-page cover as single page | On / off | On |
@@ -171,6 +172,7 @@ Renderer (Vue 3 SPA)
   PDF: pdf.js worker → offscreen canvas → LRU cache → blit
   EPUB: epub.js unpack → paginated rendering (spine page model for image-based books)
   CBZ / MOBI: fetch images page by page (unpacked on demand / text decompressed + image records read directly in main) → same canvas pipeline as PDF
+  Top→bottom: VerticalScrollView row-box layout with windowed mounting (canvas rendering, sharing the spread table with horizontal mode)
   i18n: trilingual dictionaries + Intl formatting; locale changes re-render the whole UI
         ▲ IPC (type-safe contextBridge API, contextIsolation + sandbox)
 Main process (Node.js)
@@ -182,7 +184,7 @@ Main process (Node.js)
 
 ```
 ├── electron/          # Main process: main / preload / db (repos + migrations) / services / ipc
-├── src/               # Renderer: views / stores / services (pdf·epub·pageCache·pageCurl·spread) / components
+├── src/               # Renderer: views / stores / services (pdf·epub·imagePage·cache·pageCurl·spread·verticalLayout) / components
 ├── src/i18n/          # Trilingual dictionaries, duration/date formatting and error-code mapping
 ├── shared/types.ts    # Shared types (Book / Collection / Settings / Result…)
 ├── pics/              # UI screenshots
@@ -196,11 +198,11 @@ Security baseline: the renderer is sandboxed with `contextIsolation: true` and `
 
 - `books`: title, format (derived from the extension), normalized path (unique), page count, cover path, added / last-read times, `collection_id` (NULL = ungrouped)
 - `collections`: collections (id, title, created time)
-- `reading_progress`: one row per book (page, mode, direction, zoom, cfi/percentage for EPUB locations), saved with a 1s debounce and flushed on exit
+- `reading_progress`: one row per book (page, mode, direction, zoom, cfi/percentage for EPUB locations, `row_order` for the page order inside vertical rows), saved with a 1s debounce and flushed on exit
 - `reading_stats`: daily reading-time aggregation (one row per book per day, ms accumulated; deleted with the book)
 - `settings`: key-value (JSON)
 
-Migrations use the `PRAGMA user_version` number plus sequential scripts (currently v4: collection ownership, progress cfi/percentage, reading time stats); scripts are append-only.
+Migrations use the `PRAGMA user_version` number plus sequential scripts (currently v5: collection ownership, progress cfi/percentage, reading time stats, vertical row order); scripts are append-only.
 
 </details>
 
