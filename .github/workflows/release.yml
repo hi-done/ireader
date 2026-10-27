@@ -16,7 +16,8 @@ jobs:
 
       - uses: actions/setup-node@v7
         with:
-          node-version: 20
+          # 与 ci.yml 同：electron 42 等链路要求 node >= 22.12.0
+          node-version: 22
           cache: npm
 
       - name: 安装依赖
@@ -43,7 +44,8 @@ jobs:
 
       - uses: actions/setup-node@v7
         with:
-          node-version: 20
+          # 与 ci.yml 同：electron 42 等链路要求 node >= 22.12.0
+          node-version: 22
           cache: npm
 
       - name: 校验 tag 与 package.json 版本一致

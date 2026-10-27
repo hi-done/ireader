@@ -5,6 +5,9 @@
   "description": "IReader - 离线本地漫画 PDF 阅读器",
   "author": "IReader",
   "type": "module",
+  "engines": {
+    "node": ">=22.12.0"
+  },
   "scripts": {
     "dev": "vite",
     "build": "vue-tsc && vite build && electron-builder",
