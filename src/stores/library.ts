@@ -85,6 +85,14 @@ export const useLibraryStore = defineStore('library', () => {
     return created
   }
 
+  /** 重命名合集：只 patch 命中的标题，保留对象既有字段（collection:list 返回 DB 行，整条替换会丢结构） */
+  async function renameCollection(id: number, title: string) {
+    const updated = await ipc.collection.rename(id, title)
+    collections.value = collections.value.map((c) =>
+      c.id === id ? { ...c, title: updated.title } : c
+    )
+  }
+
   /** 解散合集：成员书移回未分组，本地同步更新书的归属 */
   async function dissolveCollection(id: number) {
     await ipc.collection.remove(id)
@@ -165,6 +173,7 @@ export const useLibraryStore = defineStore('library', () => {
     rename,
     relink,
     createCollection,
+    renameCollection,
     dissolveCollection,
     moveToCollection,
     subscribeChanges,

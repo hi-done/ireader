@@ -62,6 +62,8 @@ const ireaderApi = {
       ipcRenderer.invoke('collection:create', title),
     list: (): Promise<Result<Collection[]>> => ipcRenderer.invoke('collection:list'),
     remove: (id: number): Promise<Result<void>> => ipcRenderer.invoke('collection:remove', { id }),
+    rename: (id: number, title: string): Promise<Result<Collection>> =>
+      ipcRenderer.invoke('collection:rename', { id, title }),
   },
   cover: {
     submit: (bookId: number, image: ArrayBuffer, numPages: number): Promise<Result<void>> =>

@@ -60,6 +60,7 @@ export const ipc = {
     create: (title: string) => unwrap(api().collection.create(title)),
     list: () => unwrap(api().collection.list()),
     remove: (id: number) => unwrap(api().collection.remove(id)),
+    rename: (id: number, title: string) => unwrap(api().collection.rename(id, title)),
   },
   settings: {
     all: () => unwrap(api().settings.all()),

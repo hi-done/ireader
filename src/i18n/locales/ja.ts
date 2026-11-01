@@ -84,6 +84,9 @@ export const ja = {
   'library.collection.meta.other': 'コレクション · {count}冊 · タイトル順',
   'library.collection.dissolve': 'コレクションを解散',
   'library.collection.dissolveConfirm': '解散しますか？',
+  'library.collection.rename': '名前を変更',
+  'library.collection.renameTitle': 'コレクション名を変更',
+  'library.collection.renamePlaceholder': 'コレクション名を入力',
   'library.collection.addFromHome': 'ホームから追加',
   'library.collection.empty': 'コレクションは空です。ホームから漫画を移動してください',
   'library.collection.noBooks': 'コレクションに漫画がまだありません',
@@ -122,6 +125,7 @@ export const ja = {
   'library.toast.movedToCollection': '「{title}」を「{collection}」に移動しました',
   'library.toast.createdAndMoved': 'コレクション「{title}」を作成し、「{book}」を移動しました',
   'library.toast.dissolved': 'コレクション「{title}」を解散し、収録作品を未分類に戻しました',
+  'library.toast.collectionRenamed': 'コレクション名を「{title}」に変更しました',
 
   // —— ライブラリのダイアログ ——
   'library.addDialog.title': 'ホームから漫画を追加',

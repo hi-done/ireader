@@ -84,6 +84,9 @@ export const en = {
   'library.collection.meta.other': 'Collection · {count} books · Sorted by title',
   'library.collection.dissolve': 'Dissolve collection',
   'library.collection.dissolveConfirm': 'Confirm dissolve?',
+  'library.collection.rename': 'Rename',
+  'library.collection.renameTitle': 'Rename collection',
+  'library.collection.renamePlaceholder': 'Enter collection name',
   'library.collection.addFromHome': 'Add from home',
   'library.collection.empty': 'This collection is empty. Move manga here from the home page',
   'library.collection.noBooks': 'No manga in this collection yet',
@@ -122,6 +125,7 @@ export const en = {
   'library.toast.movedToCollection': 'Moved "{title}" to "{collection}"',
   'library.toast.createdAndMoved': 'Collection "{title}" created and "{book}" moved in',
   'library.toast.dissolved': 'Collection "{title}" dissolved; its books moved back to ungrouped',
+  'library.toast.collectionRenamed': 'Renamed collection to "{title}"',
 
   // —— Library dialogs ——
   'library.addDialog.title': 'Add manga from home',

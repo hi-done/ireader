@@ -3,7 +3,7 @@
 
 import { BrowserWindow, dialog, ipcMain, screen, shell, type IpcMainInvokeEvent } from 'electron'
 import { libraryService } from '../services/libraryService'
-import { collectionsRepo } from '../db/repos/collectionsRepo'
+import { collectionsRepo, toCollection } from '../db/repos/collectionsRepo'
 import { getCoverUrl, saveCover, removeCover } from '../services/coverService'
 import { computeShotSize } from '../services/captureShot'
 import * as logger from '../services/logger'
@@ -109,15 +109,27 @@ export function registerIpcHandlers(getWin: () => BrowserWindow | null): void {
   ipcMain.handle('collection:create', wrap((title: string) => {
     const trimmed = title.trim()
     if (!trimmed) throw { code: 'INVALID_PARAMS', message: '合集名不能为空' }
-    return collectionsRepo.create(trimmed, Date.now())
+    return toCollection(collectionsRepo.create(trimmed, Date.now()))
   }))
 
-  ipcMain.handle('collection:list', wrap(() => collectionsRepo.list()))
+  ipcMain.handle('collection:list', wrap(() => collectionsRepo.list().map(toCollection)))
 
   ipcMain.handle(
     'collection:remove',
     wrap(({ id }: { id: number }) => {
       collectionsRepo.remove(id) // 成员书事务内移回未分组
+    })
+  )
+
+  ipcMain.handle(
+    'collection:rename',
+    wrap(({ id, title }: { id: number; title: string }) => {
+      const trimmed = String(title ?? '').trim()
+      if (!trimmed) throw { code: 'INVALID_PARAMS', message: '合集名不能为空' }
+      const updated = collectionsRepo.rename(id, trimmed)
+      // 合集可能已被别处解散：命中 0 行时明确报错，避免前端静默当成成功
+      if (!updated) throw { code: 'INVALID_PARAMS', message: '合集不存在' }
+      return toCollection(updated)
     })
   )
 

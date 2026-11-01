@@ -83,6 +83,9 @@ export const zhCN = {
   'library.collection.meta.other': '合集 · {count} 本 · 按名称排序',
   'library.collection.dissolve': '解散合集',
   'library.collection.dissolveConfirm': '确认解散？',
+  'library.collection.rename': '重命名',
+  'library.collection.renameTitle': '重命名合集',
+  'library.collection.renamePlaceholder': '输入合集名称',
   'library.collection.addFromHome': '从主页添加',
   'library.collection.empty': '合集还是空的，回主页把漫画移进来吧',
   'library.collection.noBooks': '合集中还没有漫画',
@@ -121,6 +124,7 @@ export const zhCN = {
   'library.toast.movedToCollection': '已将《{title}》移入「{collection}」',
   'library.toast.createdAndMoved': '已创建合集「{title}」并移入《{book}》',
   'library.toast.dissolved': '已解散合集「{title}」，成员已移回未分组',
+  'library.toast.collectionRenamed': '已将合集重命名为「{title}」',
 
   // —— 文库对话框 ——
   'library.addDialog.title': '添加主页漫画',

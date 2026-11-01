@@ -14,7 +14,7 @@
       </div>
     </section>
 
-    <!-- 合集视图头部：返回 / 标题 / 数量 / 解散 -->
+    <!-- 合集视图头部：返回 / 标题 / 数量 / 重命名 / 解散 -->
     <header v-else class="collection-head">
       <button class="ghost" @click="backHome">{{ t('common.back') }}</button>
       <div class="collection-head-info">
@@ -23,6 +23,9 @@
           {{ tp('library.collection.meta', collectionBooks.length) }}
         </span>
       </div>
+      <button class="ghost head-action" @click="askRenameCollection">
+        {{ t('library.collection.rename') }}
+      </button>
       <button class="ghost danger-text" @click="askDissolve">
         {{ dissolveArmed ? t('library.collection.dissolveConfirm') : t('library.collection.dissolve') }}
       </button>
@@ -197,6 +200,16 @@
       @confirm="confirmCreateCollection"
     />
 
+    <!-- 重命名合集：复用文本输入对话框，与新建合集同一交互 -->
+    <TextPromptDialog
+      v-if="renamingCollection"
+      :title="t('library.collection.renameTitle')"
+      :initial-value="renamingCollection.title"
+      :placeholder="t('library.collection.renamePlaceholder')"
+      @cancel="renamingCollection = null"
+      @confirm="confirmRenameCollection"
+    />
+
     <!-- 移入合集 -->
     <CollectionPickerDialog
       v-if="movingBook"
@@ -222,9 +235,9 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import type { Book, SortBy } from '../../shared/types'
+import type { Book, Collection, SortBy } from '../../shared/types'
 import { useLibraryStore } from '../stores/library'
-import { ipc } from '../services/ipc'
+import { IpcError, ipc } from '../services/ipc'
 import { coverQueueState, enqueueCovers, removeFromQueue } from '../services/coverQueue'
 import type { SelectOption } from '../services/selectMenu'
 import SelectMenu from '../components/ui/SelectMenu.vue'
@@ -236,6 +249,7 @@ import RemoveConfirmDialog from '../components/library/RemoveConfirmDialog.vue'
 import MissingFileDialog from '../components/library/MissingFileDialog.vue'
 import TextPromptDialog from '../components/library/TextPromptDialog.vue'
 import { appLocale, t, tp } from '../i18n'
+import { localizeError } from '../i18n/errors'
 import { compareTitles } from '../services/libraryList'
 
 const library = useLibraryStore()
@@ -472,6 +486,26 @@ async function confirmCreateCollection(title: string) {
   creatingCollection.value = false
   await library.createCollection(title)
   showToast(t('library.toast.collectionCreated', { title }))
+}
+
+// —— 重命名合集（只改名称，成员与封面不受影响） ——
+const renamingCollection = ref<Collection | null>(null)
+
+function askRenameCollection() {
+  renamingCollection.value = activeCollection.value
+}
+
+async function confirmRenameCollection(title: string) {
+  const collection = renamingCollection.value
+  renamingCollection.value = null
+  if (!collection) return
+  try {
+    await library.renameCollection(collection.id, title)
+    showToast(t('library.toast.collectionRenamed', { title }))
+  } catch (e) {
+    // 极端场景：对话框打开期间合集已在别处被解散，主进程回 INVALID_PARAMS
+    showToast(e instanceof IpcError ? localizeError(e) : t('error.UNKNOWN'))
+  }
 }
 
 // —— 移入合集 ——
@@ -824,6 +858,11 @@ function askDissolve() {
 
 .danger-text {
   color: var(--danger);
+  flex-shrink: 0;
+}
+
+/* 页头右侧动作按钮：与标题争空间时不被压缩变形，间距由 .collection-head 的 gap 统一控制 */
+.head-action {
   flex-shrink: 0;
 }
 
