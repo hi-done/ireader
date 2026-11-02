@@ -12,13 +12,21 @@ import { progressRepo } from '../db/repos/progressRepo'
 import { settingsRepo } from '../db/repos/settingsRepo'
 import { settingsService } from '../services/settingsService'
 import { statsService } from '../services/statsService'
+import { aiService } from '../services/aiService'
 import { updaterService } from '../services/updaterService'
 import { getBookFilesFilterName } from '../services/appLocale'
 import fs from 'node:fs'
 import {
   fail,
   ok,
+  AI_PROTOCOLS,
+  AI_TARGET_LANGS,
   LOCALE_PREFERENCES,
+  type AiProviderConfig,
+  type AiSettings,
+  type AiTargetLang,
+  type AiTranslatePayload,
+  type AiTranslationInput,
   type AppError,
   type CaptureRegionRect,
   type Direction,
@@ -69,6 +77,42 @@ function notifyLibraryChanged(win: BrowserWindow | null, payload: LibraryChanged
 
 /** 阅读方向白名单：Direction 是字面量联合无运行期值，校验需本地数组 */
 const VALID_DIRECTIONS: Direction[] = ['ltr', 'rtl', 'ttb']
+
+/**
+ * settings.ai 结构校验：先挡形状错误，再交给 settingsService 内的 normalizeAiSettings 归一。
+ * 只校验形状与协议前缀，不做可达性探测（可达性由配置页「测试连接」负责）。
+ */
+function assertAiPartial(raw: unknown): void {
+  const ai = (raw && typeof raw === 'object' ? raw : {}) as Partial<AiSettings>
+  if (typeof ai.enabled !== 'boolean') {
+    throw { code: 'INVALID_PARAMS', message: 'ai.enabled 取值无效' } as AppError
+  }
+  if (!AI_TARGET_LANGS.includes(ai.targetLang as AiTargetLang)) {
+    throw { code: 'INVALID_PARAMS', message: 'ai.targetLang 取值无效' } as AppError
+  }
+  if (!Array.isArray(ai.providers)) {
+    throw { code: 'INVALID_PARAMS', message: 'ai.providers 取值无效' } as AppError
+  }
+  for (const item of ai.providers) {
+    const p = (item && typeof item === 'object' ? item : {}) as Partial<AiProviderConfig>
+    if (typeof p.baseUrl !== 'string' || !/^https?:\/\//.test(p.baseUrl)) {
+      throw { code: 'INVALID_PARAMS', message: '配置地址必须以 http:// 或 https:// 开头' } as AppError
+    }
+    // 协议白名单：写入口严格拦截，读路径由 normalizeAiSettings 回退 openai
+    if (!(AI_PROTOCOLS as readonly string[]).includes(p.protocol as string)) {
+      throw { code: 'INVALID_PARAMS', message: '配置接口协议取值无效' } as AppError
+    }
+    if (typeof p.apiKey !== 'string') {
+      throw { code: 'INVALID_PARAMS', message: '配置 API Key 必须是字符串' } as AppError
+    }
+    if (typeof p.model !== 'string') {
+      throw { code: 'INVALID_PARAMS', message: '配置模型名必须是字符串' } as AppError
+    }
+    if (typeof p.name !== 'string') {
+      throw { code: 'INVALID_PARAMS', message: '配置名称必须是字符串' } as AppError
+    }
+  }
+}
 
 export function registerIpcHandlers(getWin: () => BrowserWindow | null): void {
   ipcMain.handle('dialog:pickBookFiles', async () => {
@@ -242,10 +286,26 @@ export function registerIpcHandlers(getWin: () => BrowserWindow | null): void {
       ) {
         throw { code: 'INVALID_PARAMS', message: 'defaultDirection 取值无效' } as AppError
       }
+      // AI 配置：形状非法直接拒收，合法则归一化（activeProviderId 悬空会回退为 null）
+      if (partial.ai !== undefined) assertAiPartial(partial.ai)
       // 方向变更的零进度书同步在 service 内与设置写入同事务完成
       return settingsService.patch(partial)
     })
   )
+
+  // AI 框选翻译：translate / test 会外发请求（仅由用户动作触发），其余只读写本地库
+  ipcMain.handle('ai:translate', wrapAsync((payload: AiTranslatePayload) => aiService.translate(payload)))
+
+  ipcMain.handle(
+    'ai:test',
+    wrapAsync(({ provider }: { provider: AiProviderConfig }) => aiService.test(provider))
+  )
+
+  ipcMain.handle('ai:list', wrap(({ bookId }: { bookId: number }) => aiService.list(bookId)))
+
+  ipcMain.handle('ai:save', wrap((input: AiTranslationInput) => aiService.save(input)))
+
+  ipcMain.handle('ai:remove', wrap(({ id }: { id: number }) => aiService.remove(id)))
 
   ipcMain.handle(
     'stats:addTime',

@@ -4,7 +4,7 @@
 import { getDatabase } from '../db/database'
 import { progressRepo } from '../db/repos/progressRepo'
 import { settingsRepo } from '../db/repos/settingsRepo'
-import { isUnstartedProgress, type Direction, type Settings } from '../../shared/types'
+import { isUnstartedProgress, normalizeAiSettings, type Direction, type Settings } from '../../shared/types'
 import * as logger from './logger'
 
 /**
@@ -32,6 +32,9 @@ export const settingsService = {
    * @param partial 本次要修改的设置字段
    */
   patch(partial: Partial<Settings>): Settings {
+    // ai 归一化后再入库：handler 已做结构校验，这里再兜一层（越界值、悬空的 activeProviderId）
+    const normalized: Partial<Settings> =
+      partial.ai === undefined ? partial : { ...partial, ai: normalizeAiSettings(partial.ai) }
     const run = getDatabase().transaction((p: Partial<Settings>) => {
       const prev = settingsRepo.getAll()
       const next = settingsRepo.patch(p)
@@ -39,7 +42,7 @@ export const settingsService = {
       const synced = directionChanged ? syncUnstartedDirection(next.defaultDirection) : 0
       return { next, directionChanged, synced }
     })
-    const { next, directionChanged, synced } = run(partial)
+    const { next, directionChanged, synced } = run(normalized)
     if (directionChanged) {
       logger.info(`[settings] 默认阅读方向 → ${next.defaultDirection}，同步零进度书 ${synced} 本`)
     }

@@ -61,6 +61,38 @@ export type LocalePreference = (typeof LOCALE_PREFERENCES)[number]
 /** 实际生效的界面语言（不含 system） */
 export type AppLocale = 'zh-CN' | 'en' | 'ja'
 
+/** 译文目标语言：简体中文 / 英文 / 日文 */
+export const AI_TARGET_LANGS = ['zh-CN', 'en', 'ja'] as const
+export type AiTargetLang = (typeof AI_TARGET_LANGS)[number]
+
+/** 接口协议：openai = /chat/completions；anthropic = /v1/messages（DeepSeek 的 /anthropic 端点属于此类） */
+export const AI_PROTOCOLS = ['openai', 'anthropic'] as const
+export type AiProtocol = (typeof AI_PROTOCOLS)[number]
+
+/** 单个模型服务配置（明文存于 settings JSON，取舍见 spec §13 风险表） */
+export interface AiProviderConfig {
+  /** 渲染层生成的本地 id（时间戳），仅用于列表选中与增删，不参与请求 */
+  id: number
+  /** 展示名，如「GPT-4o mini」 */
+  name: string
+  /** 基础地址，如 https://api.openai.com/v1 或 https://api.deepseek.com/anthropic */
+  baseUrl: string
+  apiKey: string
+  /** 模型名，如 gpt-4o-mini */
+  model: string
+  /** 请求协议；旧配置缺此字段时由 normalizeAiSettings 补齐为 openai */
+  protocol: AiProtocol
+}
+
+/** AI 框选翻译设置（Settings.ai） */
+export interface AiSettings {
+  enabled: boolean
+  targetLang: AiTargetLang
+  /** 当前使用配置的 id；null = 未选择 */
+  activeProviderId: number | null
+  providers: AiProviderConfig[]
+}
+
 export interface Settings {
   defaultMode: ReadingMode
   defaultDirection: Direction
@@ -71,6 +103,8 @@ export interface Settings {
   epubFontSize: number
   /** 界面语言偏好 */
   locale: LocalePreference
+  /** AI 框选翻译设置 */
+  ai: AiSettings
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -81,6 +115,7 @@ export const DEFAULT_SETTINGS: Settings = {
   coverSinglePage: true,
   epubFontSize: 100,
   locale: 'system',
+  ai: { enabled: false, targetLang: 'zh-CN', activeProviderId: null, providers: [] },
 }
 
 export type ErrorCode =
@@ -92,6 +127,9 @@ export type ErrorCode =
   | 'DB_ERROR'
   | 'UPDATER_UNAVAILABLE'
   | 'UPDATER_FAILED'
+  | 'AI_NOT_CONFIGURED'
+  | 'AI_AUTH_FAILED'
+  | 'AI_REQUEST_FAILED'
   | 'UNKNOWN'
 
 export interface AppError {
@@ -175,6 +213,64 @@ export interface ReadingStatsSummary {
   books: BookReadingStat[]
 }
 
+/** 归一化矩形：相对单页显示盒的 0~1 比例 */
+export interface AiRect {
+  x: number
+  y: number
+  w: number
+  h: number
+}
+
+/** 一条译文记录（DB 行映射） */
+export interface AiTranslationRecord {
+  id: number
+  bookId: number
+  /** 真实页码（1 基，与 reader.spreads 口径一致） */
+  page: number
+  rect: AiRect
+  text: string
+  /** 文字行高 / 页高，渲染字号 = 页显示高度 × 该值 */
+  fontRatio: number
+  collapsed: boolean
+  createdAt: number
+}
+
+/** 译文写入载荷：id 为空 = 新增，有值 = 更新该条 */
+export interface AiTranslationInput {
+  id?: number | null
+  bookId: number
+  page: number
+  rect: AiRect
+  text: string
+  fontRatio: number
+  collapsed: boolean
+}
+
+/** 翻译请求（渲染层已裁切好图片） */
+export interface AiTranslatePayload {
+  bookId: number
+  page: number
+  /** 书名：提示词用于专名译法一致 */
+  bookTitle: string
+  /** 框选区域的 JPEG，base64（不含 data: 前缀） */
+  imageBase64: string
+}
+
+/** 翻译结果 */
+export interface AiTranslateResult {
+  /** 译文；空串表示图内未识别到文字 */
+  text: string
+  /** 建议字号比例（已钳制到 0.02~0.15） */
+  fontRatio: number
+}
+
+/** 连接测试结果 */
+export interface AiTestResult {
+  model: string
+  /** 往返耗时（ms） */
+  latencyMs: number
+}
+
 /** 更新检查结果（updater:check 返回） */
 export interface UpdateCheckResult {
   /** 当前安装版本（app.getVersion()） */
@@ -249,4 +345,42 @@ export function formatDayKey(date: Date): string {
 export function isUnstartedProgress(page: number, percentage?: number | null): boolean {
   if (page > 1) return false
   return percentage == null || percentage <= 0
+}
+
+/**
+ * 归一化 AI 设置（双进程共用：主进程落盘前、渲染层读回后都过一遍）。
+ * 旧库没有 settings.ai 字段，或持久化了非法/手改脏数据时，逐字段回退默认值，避免渲染层崩溃。
+ */
+export function normalizeAiSettings(raw: unknown): AiSettings {
+  const source = (raw && typeof raw === 'object' ? raw : {}) as Partial<AiSettings>
+  const seen = new Set<number>()
+  const providers: AiProviderConfig[] = []
+  for (const item of Array.isArray(source.providers) ? source.providers : []) {
+    const p = (item && typeof item === 'object' ? item : {}) as Partial<AiProviderConfig>
+    const id = Number(p.id)
+    if (!Number.isFinite(id) || seen.has(id)) continue // 丢弃无 id / 重复 id，否则列表选中态会串行
+    seen.add(id)
+    providers.push({
+      id,
+      name: typeof p.name === 'string' ? p.name : '',
+      baseUrl: typeof p.baseUrl === 'string' ? p.baseUrl : '',
+      apiKey: typeof p.apiKey === 'string' ? p.apiKey : '',
+      model: typeof p.model === 'string' ? p.model : '',
+      // 旧配置 / 脏数据回退 openai：协议字段是后加的，历史记录里不存在
+      protocol: (AI_PROTOCOLS as readonly string[]).includes(p.protocol as string)
+        ? (p.protocol as AiProtocol)
+        : 'openai',
+    })
+  }
+  const targetLang = (AI_TARGET_LANGS as readonly string[]).includes(source.targetLang as string)
+    ? (source.targetLang as AiTargetLang)
+    : DEFAULT_SETTINGS.ai.targetLang
+  const activeId = Number(source.activeProviderId)
+  return {
+    enabled: source.enabled === true,
+    targetLang,
+    // 选中项已随配置删除时回退为未选择，避免请求阶段才发现配置悬空
+    activeProviderId: providers.some((p) => p.id === activeId) ? activeId : null,
+    providers,
+  }
 }

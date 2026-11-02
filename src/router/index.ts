@@ -29,6 +29,11 @@ const router = createRouter({
       name: 'manage',
       component: () => import('../views/LibraryManageView.vue'),
     },
+    {
+      path: '/ai-config',
+      name: 'aiConfig',
+      component: () => import('../views/AiConfigView.vue'),
+    },
   ],
 })
 

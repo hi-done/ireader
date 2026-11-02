@@ -98,6 +98,27 @@ const MIGRATIONS: Array<(db: Database.Database) => void> = [
       db.exec('ALTER TABLE reading_progress ADD COLUMN row_order TEXT;')
     }
   },
+
+  // v6: AI 框选翻译记录（矩形为相对单页显示盒的 0~1 比例，不随缩放/单双页失效；删书级联清除）
+  (db) => {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS ai_translations (
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        book_id    INTEGER NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+        page       INTEGER NOT NULL,
+        rect_x     REAL    NOT NULL,
+        rect_y     REAL    NOT NULL,
+        rect_w     REAL    NOT NULL,
+        rect_h     REAL    NOT NULL,
+        text       TEXT    NOT NULL,
+        font_ratio REAL    NOT NULL DEFAULT 0.06,
+        collapsed  INTEGER NOT NULL DEFAULT 0,
+        created_at INTEGER NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_ai_translations_book_page ON ai_translations(book_id, page);
+    `)
+  },
 ]
 
 /**

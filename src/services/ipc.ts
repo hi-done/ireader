@@ -2,6 +2,9 @@
 // 对应设计文档 §6.1
 
 import type {
+  AiProviderConfig,
+  AiTranslatePayload,
+  AiTranslationInput,
   AppError,
   CaptureRegionRect,
   ReadingProgress,
@@ -70,6 +73,13 @@ export const ipc = {
     addTime: (bookId: number, day: string, deltaMs: number) =>
       unwrap(api().stats.addTime(bookId, day, deltaMs)),
     summary: (days: number) => unwrap(api().stats.summary(days)),
+  },
+  ai: {
+    translate: (payload: AiTranslatePayload) => unwrap(api().ai.translate(payload)),
+    test: (provider: AiProviderConfig) => unwrap(api().ai.test(provider)),
+    list: (bookId: number) => unwrap(api().ai.list(bookId)),
+    save: (input: AiTranslationInput) => unwrap(api().ai.save(input)),
+    remove: (id: number) => unwrap(api().ai.remove(id)),
   },
   updater: {
     status: () => unwrap(api().updater.status()),

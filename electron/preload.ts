@@ -1,5 +1,11 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import type {
+  AiProviderConfig,
+  AiTestResult,
+  AiTranslatePayload,
+  AiTranslateResult,
+  AiTranslationInput,
+  AiTranslationRecord,
   Book,
   CaptureRegionRect,
   Collection,
@@ -80,6 +86,19 @@ const ireaderApi = {
       ipcRenderer.invoke('stats:addTime', { bookId, day, deltaMs }),
     summary: (days: number): Promise<Result<ReadingStatsSummary>> =>
       ipcRenderer.invoke('stats:summary', { days }),
+  },
+  ai: {
+    /** 框选翻译（唯一外发图片的入口，由用户拖框触发） */
+    translate: (payload: AiTranslatePayload): Promise<Result<AiTranslateResult>> =>
+      ipcRenderer.invoke('ai:translate', payload),
+    /** 配置页测试连接：用尚未保存的草稿配置发一条最小请求 */
+    test: (provider: AiProviderConfig): Promise<Result<AiTestResult>> =>
+      ipcRenderer.invoke('ai:test', { provider }),
+    list: (bookId: number): Promise<Result<AiTranslationRecord[]>> =>
+      ipcRenderer.invoke('ai:list', { bookId }),
+    save: (input: AiTranslationInput): Promise<Result<AiTranslationRecord>> =>
+      ipcRenderer.invoke('ai:save', input),
+    remove: (id: number): Promise<Result<void>> => ipcRenderer.invoke('ai:remove', { id }),
   },
   updater: {
     /** 更新器状态（纯本地，设置页进入时恢复 UI 用） */

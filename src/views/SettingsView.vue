@@ -104,6 +104,23 @@
               </svg>
             </span>
           </button>
+          <!-- AI 功能拓展：模型配置 / 译文语言 / 总开关独立页（specs/20261102-AI框选翻译功能设计方案.md §9.3） -->
+          <button class="row row-link" @click="router.push('/ai-config')">
+            <span class="row-label">{{ t('settings.data.ai') }}</span>
+            <span class="row-value">
+              {{ t('settings.data.aiHint') }}
+              <svg class="chevron" width="7" height="12" viewBox="0 0 7 12" aria-hidden="true">
+                <path
+                  d="M1 1 L6 6 L1 11"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.6"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                />
+              </svg>
+            </span>
+          </button>
         </div>
       </section>
 

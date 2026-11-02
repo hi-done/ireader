@@ -55,6 +55,31 @@
           @trigger-enter="openZoomTip"
           @trigger-leave="closeTip"
         />
+        <!-- AI 框选翻译：按钮 + 动作下拉（全部隐藏 / 全部折叠 / 全部展开） -->
+        <div class="ai-menu">
+          <button
+            class="ai-toggle"
+            :class="{ active: ai.selecting, off: !aiReady }"
+            :aria-disabled="!aiReady"
+            :aria-pressed="ai.selecting"
+            @click="onAiButton"
+            @pointerenter="openAiTip"
+            @pointerleave="closeTip"
+            @focus="openAiTip"
+            @blur="closeTip"
+          >
+            {{ t('ai.readerButton') }}
+          </button>
+          <button
+            ref="aiCaretEl"
+            class="ai-caret"
+            :disabled="!aiReady"
+            :aria-label="t('ai.readerHint')"
+            aria-haspopup="menu"
+            :aria-expanded="aiMenuOpen"
+            @click="toggleAiMenu"
+          >▾</button>
+        </div>
         <button
           :aria-label="t('reader.fullscreen')"
           @click="toggleFullscreen"
@@ -87,12 +112,18 @@
         <!-- margin:auto：内容小于视口时居中，超出视口时可滚动到边缘 -->
         <div ref="pageContentEl" class="page-content">
           <div
-            v-for="(_, i) in currentDisplayPages"
+            v-for="(page, i) in currentDisplayPages"
             :key="i"
             class="page-wrap"
           >
             <!-- key 用索引：单双页切换时同位置 canvas 复用同一 DOM，配合 pdf 层的自动取消正确工作 -->
             <canvas :ref="(el) => setCanvasRef(i, el)" />
+            <!-- AI 译文覆盖层：与页盒同尺寸，按真实页码命中本页记录 -->
+            <AiTranslationLayer
+              :page="page"
+              :book-title="bookTitle"
+              :selectable="ai.selecting"
+            />
           </div>
         </div>
         <div class="hotzone hotzone-left" @click="onHotzoneClick('left')" />
@@ -126,6 +157,30 @@
         {{ t('reader.nextPage') }}
       </button>
     </footer>
+
+    <!-- 选词 / 未启用提示：底部上方居中胶囊，自动淡出 -->
+    <div v-if="aiNotice" class="ai-notice">{{ aiNotice }}</div>
+
+    <!-- AI 动作下拉：Teleport 到 body，顶栏毛玻璃的固定包含块不会让菜单错位 -->
+    <Teleport to="body">
+      <div v-if="aiMenuOpen" class="ai-menu-pop" role="menu" :style="aiMenuStyle">
+        <button
+          role="menuitem"
+          :disabled="!hasAiRecords || ai.hiddenAll"
+          @click="onAiMenuAction('hideAll')"
+        >{{ t('ai.menu.hideAll') }}</button>
+        <button
+          role="menuitem"
+          :disabled="!hasAiRecords"
+          @click="onAiMenuAction('collapseAll')"
+        >{{ t('ai.menu.collapseAll') }}</button>
+        <button
+          role="menuitem"
+          :disabled="!hasAiRecords"
+          @click="onAiMenuAction('expandAll')"
+        >{{ t('ai.menu.expandAll') }}</button>
+      </div>
+    </Teleport>
 
     <!-- 提示浮层：Teleport 到 body，顶栏毛玻璃的固定包含块不影响坐标；同一视图只挂一个实例 -->
     <CardTip
@@ -172,15 +227,18 @@ import {
   type WheelScrollState,
 } from '../services/wheelScroll'
 import EpubReaderView from './EpubReaderView.vue'
+import AiTranslationLayer from '../components/reader/AiTranslationLayer.vue'
 import { appLocale, t } from '../i18n'
 import { localizeError } from '../i18n/errors'
 import { compareTitles } from '../services/libraryList'
+import { useAiTranslationStore } from '../stores/aiTranslation'
 
 const route = useRoute()
 const router = useRouter()
 const reader = useReaderStore()
 const library = useLibraryStore()
 const settingsStore = useSettingsStore()
+const ai = useAiTranslationStore()
 
 /** 当前路由书 id（NaN 表示无有效参数，仅在 reader 路由下有意义） */
 const routeBookId = computed(() => Number(route.params.bookId))
@@ -237,10 +295,152 @@ function openDirectionTip(anchor: HTMLElement) {
   openTipAt(anchor, t('reader.direction'))
 }
 
+/** AI 按钮提示：带快捷键说明（不随顶栏按钮文字长度变化） */
+function openAiTip(event: PointerEvent | FocusEvent) {
+  openTip(event, t('ai.readerHint'))
+}
+
 // 顶栏淡出后按钮已不可见：提示框同步收起，不悬浮在空处
 watch(barsVisible, (visible) => {
   if (!visible) closeTip()
 })
+
+// —— AI 框选翻译：仅横向单/双页；状态全在 store，视图只负责入口与交互隔离 ——
+/** AI 可用 = 总开关开启且选中了有效的模型配置 */
+const aiReady = computed(() => {
+  const settings = settingsStore.settings.ai
+  return (
+    settings.enabled &&
+    settings.providers.some((p) => p.id === settings.activeProviderId)
+  )
+})
+const hasAiRecords = computed(() => ai.records.length > 0)
+
+/** 底部提示胶囊：选词提示与「未启用」提示共用，自动淡出 */
+const aiNotice = ref('')
+let aiNoticeTimer: ReturnType<typeof setTimeout> | null = null
+
+function showAiNotice(message: string, ms = 3000): void {
+  aiNotice.value = message
+  if (aiNoticeTimer) clearTimeout(aiNoticeTimer)
+  aiNoticeTimer = setTimeout(() => {
+    aiNoticeTimer = null
+    aiNotice.value = ''
+  }, ms)
+}
+
+function clearAiNotice(): void {
+  if (aiNoticeTimer) clearTimeout(aiNoticeTimer)
+  aiNoticeTimer = null
+  aiNotice.value = ''
+}
+
+// 退出选词（再次点按钮 / Esc / 框选完成）统一收起提示并解锁工具栏
+watch(
+  () => ai.selecting,
+  (on) => {
+    if (!on) {
+      clearAiNotice()
+      unpinBars()
+    }
+  }
+)
+
+/** 进入 / 退出选词：选词期间锁定顶栏，避免鼠标移动把工具栏自动隐藏 */
+function toggleAiSelect(): void {
+  if (ai.selecting) {
+    ai.endSelect()
+    return
+  }
+  ai.beginSelect()
+  pinBars()
+  showAiNotice(t('ai.selectHint'))
+}
+
+/** 按钮不做真 disabled：禁用态下需要能弹出「去配置」提示 */
+function onAiButton(): void {
+  if (!aiReady.value) {
+    showAiNotice(t('ai.disabledTip'))
+    return
+  }
+  toggleAiSelect()
+}
+
+// —— 动作下拉：Teleport 到 body 后按触发按钮矩形定位（顶栏毛玻璃会改变 fixed 包含块） ——
+const aiCaretEl = ref<HTMLElement | null>(null)
+const aiMenuOpen = ref(false)
+const aiMenuPos = ref({ top: 0, right: 0 })
+
+const aiMenuStyle = computed<Record<string, string>>(() => ({
+  top: `${aiMenuPos.value.top}px`,
+  right: `${aiMenuPos.value.right}px`,
+}))
+
+function toggleAiMenu(): void {
+  if (aiMenuOpen.value) {
+    closeAiMenu()
+    showBarsTemporarily()
+    return
+  }
+  const rect = aiCaretEl.value?.getBoundingClientRect()
+  if (!rect) return
+  aiMenuPos.value = {
+    top: rect.bottom + 6,
+    right: Math.max(window.innerWidth - rect.right, 8),
+  }
+  aiMenuOpen.value = true
+  pinBars()
+  document.addEventListener('pointerdown', onDocPointerDown, true)
+  document.addEventListener('keydown', onMenuKeydown, true)
+}
+
+function closeAiMenu(): void {
+  if (!aiMenuOpen.value) return
+  aiMenuOpen.value = false
+  document.removeEventListener('pointerdown', onDocPointerDown, true)
+  document.removeEventListener('keydown', onMenuKeydown, true)
+}
+
+/** 点菜单外任意处收起菜单，并恢复顶栏自动隐藏计时 */
+function onDocPointerDown(e: PointerEvent): void {
+  const target = e.target as Node | null
+  const pop = document.querySelector('.ai-menu-pop')
+  if (target === aiCaretEl.value || (target && pop?.contains(target))) return
+  closeAiMenu()
+  unpinBars()
+}
+
+/** 菜单内的 Esc 优先收起菜单：阻止捕获后的 window keydown 退出阅读页 */
+function onMenuKeydown(e: KeyboardEvent): void {
+  if (e.key !== 'Escape') return
+  e.preventDefault()
+  e.stopPropagation()
+  closeAiMenu()
+  unpinBars()
+}
+
+type AiMenuAction = 'hideAll' | 'collapseAll' | 'expandAll'
+
+function onAiMenuAction(action: AiMenuAction): void {
+  closeAiMenu()
+  unpinBars()
+  switch (action) {
+    case 'hideAll':
+      ai.hideAll()
+      break
+    case 'collapseAll':
+      void ai.collapseAll()
+      break
+    case 'expandAll':
+      void ai.expandAll()
+      break
+  }
+}
+
+/** 翻页 / 重排期间淡出覆盖层：卷曲动画（z1）不得与译文框（z2）叠在一起 */
+function setAiOverlayFading(on: boolean): void {
+  rootEl.value?.classList.toggle('ai-overlay-fading', on)
+}
 
 const loadError = ref('')
 /** 与 currentDisplayPages 按索引一一对应的 canvas 引用 */
@@ -394,6 +594,7 @@ watch(isEpub, (now) => {
     reader.close()
     clearCache()
     loadError.value = ''
+    ai.reset(null) // 切到 EPUB：PDF 覆盖层与在途请求一起作废
   }
 })
 
@@ -425,6 +626,7 @@ async function doOpen(id: number) {
   cancelTurnCurl()
   reader.close() // 落盘上一本进度（flushProgress）并销毁旧 PDF 文档
   clearCache() // 位图缓存属于上一本书
+  void ai.load(id) // 译文记录按书隔离：换书即换一批覆盖层内容（store 内部丢弃过期结果）
   await reader.open(id)
 }
 
@@ -460,6 +662,9 @@ onBeforeUnmount(() => {
   cancelTurnCurl()
   clearCache()
   stopTracking() // 结算并停止阅读计时
+  clearAiNotice()
+  closeAiMenu()
+  ai.reset(null) // 作废在途翻译：离开阅读页后返回的结果不再渲染
   reader.close()
 })
 
@@ -499,7 +704,11 @@ function switchBook(delta: 1 | -1) {
 
 // 监听显示页序列而非 currentIndex：模式/方向切换可能保持索引不变，但 displayOrder 已变；
 // 是否翻页以 store 的 navCount 判定（仅 goTo 递增），避免把页组重排误判为翻页
-watch(currentDisplayPages, () => void runTurnPass())
+watch(currentDisplayPages, (pages) => {
+  // 离开当前显示页的临时框（兜底 / 错误 / 在途）一律丢弃：翻页后不应再出现
+  ai.prunePending(pages)
+  void runTurnPass()
+})
 
 // 切到上→下：揭除在播卷曲、清连翻会话、作废预取（纵向不参与动画管线）
 watch(isVertical, (vertical) => {
@@ -508,6 +717,9 @@ watch(isVertical, (vertical) => {
   cancelTurnCurl()
   cancelPrefetch()
   policy.reset()
+  // 纵向不支持框选翻译：退出选词态，否则滚轮与拖拽会被一直屏蔽
+  ai.endSelect()
+  unpinBars()
 })
 
 /** 拖动中零渲染：整组缓存命中才贴图（邻页微调仍实时跟随），否则保持当前画面。
@@ -578,7 +790,14 @@ async function runTurnPass(): Promise<void> {
   // 不再渲染中间页——pdf.js 任务不可取消，串行后真正执行的只有首、末两页
   await renderChain
   if (gen !== turnGen) return // 更新请求已接管：不做任何收尾动作
-  const painted = await renderCurrentSpread({ fade: !decision.burst })
+  // 新页即将上屏：先淡出译文覆盖层（旧框属于旧页位置），落定后统一恢复
+  setAiOverlayFading(true)
+  let painted = false
+  try {
+    painted = await renderCurrentSpread({ fade: !decision.burst })
+  } finally {
+    setAiOverlayFading(false)
+  }
   if (gen !== turnGen || !painted) return
 
   // 每轮连翻渲染完成后重置停手计时；到期且无新轮次才补播
@@ -598,7 +817,7 @@ async function runTurnPass(): Promise<void> {
     from: fromSnap,
     to: toSnap,
     fromRight: (indexDelta > 0) === (reader.direction === 'ltr'),
-    zIndex: 1, // 低于控制栏（z2）：翻页动画不遮挡顶部/底部工具栏
+    zIndex: 1, // 低于控制栏（z3）：翻页动画不遮挡顶部/底部工具栏
   })
 }
 
@@ -654,7 +873,7 @@ function finishBurstCurl(): void {
     from: fromSnap,
     to: toSnap,
     fromRight: (dir === 'forward') === (reader.direction === 'ltr'),
-    zIndex: 1, // 低于控制栏 z2，与主翻页 / 滑块补播一致
+    zIndex: 1, // 低于控制栏 z3，与主翻页 / 滑块补播一致
   })
 }
 
@@ -726,7 +945,13 @@ watch(
     // 纵向由组件的 sizing 监听自行重排重渲
     if (isVertical.value) return
     await nextTick()
-    await renderCurrentSpread()
+    // 缩放重排：译文框按百分比自动跟随，重渲期间先淡出避免旧像素与新尺寸同时存在
+    setAiOverlayFading(true)
+    try {
+      await renderCurrentSpread()
+    } finally {
+      setAiOverlayFading(false)
+    }
   }
 )
 
@@ -1002,12 +1227,14 @@ async function finishSlide(
     from: fromSnap,
     to: toSnap,
     fromRight,
-    zIndex: 1, // 低于控制栏（z2）：翻页动画不遮挡顶部/底部工具栏
+    zIndex: 1, // 低于控制栏（z3）：翻页动画不遮挡顶部/底部工具栏
   })
 }
 
 let wheelLock = false
 function onWheel(e: WheelEvent) {
+  // 选词模式：只保留 Ctrl/Cmd 缩放与原生滚动，绝不翻页（拖框与滚轮翻页会互相干扰）
+  if (ai.selecting && !e.ctrlKey && !e.metaKey) return
   // 纵向：交给滚动容器原生滚动，仅保留 Ctrl/Cmd 缩放
   if (isVertical.value) {
     if (e.ctrlKey || e.metaKey) {
@@ -1165,6 +1392,10 @@ let suppressClick = false
 
 function onMouseDown(e: MouseEvent) {
   if (e.button !== 0 || !pageAreaEl.value) return
+  // 选词模式：拖拽用于框选，不做平移
+  if (ai.selecting) return
+  // 覆盖层内（译文框 / 折叠球 / 缩放手柄）的按下属于框内交互：不发起平移，否则拖拽改尺寸会连带滚动页面
+  if ((e.target as HTMLElement | null)?.closest('.ai-layer')) return
   // 纵向：禁拖拽平移（滚动容器自己承接滚动与横向滚动条）
   if (isVertical.value) return
   const area = pageAreaEl.value
@@ -1194,7 +1425,9 @@ function onResize() {
     clearBurstSession()
     cancelTurnCurl()
     cancelPrefetch()
-    void renderCurrentSpread()
+    // 重排期间淡出译文框，避免旧位置停留的框浮在新页面尺寸上
+    setAiOverlayFading(true)
+    void renderCurrentSpread().finally(() => setAiOverlayFading(false))
   }, 200)
 }
 
@@ -1316,8 +1549,18 @@ function onKeydown(e: KeyboardEvent) {
     case 'F':
       toggleFullscreen()
       break
+    case 'a':
+    case 'A':
+      // 未启用时只提示，不进选词态
+      if (!aiReady.value) showAiNotice(t('ai.disabledTip'))
+      else toggleAiSelect()
+      break
     case 'Escape':
-      if (document.fullscreenElement) document.exitFullscreen()
+      // 选词态优先退出选词，再才是退全屏 / 返回文库
+      if (ai.selecting) {
+        ai.endSelect()
+        unpinBars()
+      } else if (document.fullscreenElement) document.exitFullscreen()
       else goBack()
       break
   }
@@ -1349,7 +1592,8 @@ function onKeydown(e: KeyboardEvent) {
   color: #fff;
   opacity: 0;
   transition: opacity 0.2s;
-  z-index: 2;
+  /* z3：适高模式下页顶译文框（z2）与工具栏几何重叠时，工具栏必须在上 */
+  z-index: 3;
 }
 
 .top-bar {
@@ -1391,6 +1635,121 @@ function onKeydown(e: KeyboardEvent) {
   display: flex;
   gap: 8px;
   align-items: center;
+}
+
+/* —— AI 框选翻译：主按钮 + 动作下拉（同一组描边拼在一起） —— */
+.ai-menu {
+  display: flex;
+  align-items: center;
+}
+
+/* 选择器带 .ai-menu 前缀：需越过 .controls button 的描边 / 圆角声明 */
+.ai-menu .ai-toggle {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+  border-right: none;
+  white-space: nowrap;
+}
+
+/* 选词态：按下态（底色浅填充 + 描边不透明） */
+.ai-menu .ai-toggle.active {
+  background: rgba(255, 255, 255, 0.18);
+  border-color: rgba(255, 255, 255, 0.85);
+}
+
+/* 未启用：视觉禁用但仍可点击，点击才给「去配置」提示 */
+.ai-menu .ai-toggle.off {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.ai-menu .ai-caret {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  /* 拉伸到主按钮高度：两段拼成一个按钮组 */
+  align-self: stretch;
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+  padding: 0 6px;
+  line-height: 1;
+}
+
+.ai-menu .ai-caret:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+/* 底部提示胶囊：选词提示 / 未启用提示 */
+.ai-notice {
+  position: absolute;
+  left: 50%;
+  bottom: 64px;
+  z-index: 4;
+  transform: translateX(-50%);
+  padding: 8px 14px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(12px) saturate(160%);
+  color: #fff;
+  font-size: 12px;
+  line-height: 1.3;
+  pointer-events: none;
+  animation: ai-notice-in 160ms ease-out;
+}
+
+@keyframes ai-notice-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, 6px);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+}
+
+/* 动作下拉：Teleport 到 body，fixed 定位不受顶栏毛玻璃包含块影响 */
+.ai-menu-pop {
+  position: fixed;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  min-width: 132px;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.28);
+}
+
+.ai-menu-pop button {
+  padding: 7px 10px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  font-size: 13px;
+  text-align: left;
+}
+
+.ai-menu-pop button:hover:not(:disabled) {
+  background: var(--brand-soft);
+  color: var(--brand);
+}
+
+.ai-menu-pop button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* 翻页 / 重排期间淡出译文覆盖层（作用于子组件根节点） */
+.reader-view.ai-overlay-fading .ai-layer {
+  opacity: 0;
+}
+
+.ai-layer {
+  transition: opacity 0.12s ease;
 }
 
 .icon-btn,
@@ -1447,6 +1806,8 @@ function onKeydown(e: KeyboardEvent) {
   /* canvas 是 inline 元素：行内基线的 descender 会在底部留出缝隙，必须块化消除 */
   display: block;
   line-height: 0;
+  /* AI 译文覆盖层的定位父级：覆盖层用 inset:0 铺满页盒，坐标全部百分比 */
+  position: relative;
 }
 
 .page-content {
