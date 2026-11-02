@@ -36,3 +36,4 @@ lerna-debug.log*
 *.njsproj
 *.sln
 *.sw?
+specs/drafts
