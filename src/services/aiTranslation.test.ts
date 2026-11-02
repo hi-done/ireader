@@ -1,9 +1,10 @@
-// aiTranslation 纯逻辑单测：归一化矩形、缩放下限、字号换算、百分比样式
+// aiTranslation 纯逻辑单测：归一化矩形、缩放/拖动的位置夹取、字号换算、百分比样式
 // 对应设计文档《20261102-AI框选翻译功能设计方案》§11.1
 
 import { describe, expect, it } from 'vitest'
 import {
   computeFontPx,
+  moveRect,
   normalizeRect,
   resizeRect,
   toPercentStyle,
@@ -92,6 +93,48 @@ describe('resizeRect', () => {
   it('页盒尺寸非法时原样返回', () => {
     const rect = { x: 0.2, y: 0.2, w: 0.5, h: 0.5 }
     expect(resizeRect(rect, { dx: 10, dy: 10 }, { width: 0, height: 0 })).toEqual(rect)
+  })
+})
+
+describe('moveRect', () => {
+  it('按像素位移换算位置，宽高不变', () => {
+    const rect = { x: 0.1, y: 0.1, w: 0.2, h: 0.3 }
+    // dx=+20 → +0.1；dy=+10 → +0.1
+    const got = moveRect(rect, { dx: 20, dy: 10 }, PAGE)
+    expect(got.x).toBeCloseTo(0.2)
+    expect(got.y).toBeCloseTo(0.2)
+    expect(got.w).toBe(0.2)
+    expect(got.h).toBe(0.3)
+  })
+
+  it('右下越界时左上角夹取到 1-w / 1-h，宽高不变', () => {
+    const rect = { x: 0.5, y: 0.5, w: 0.3, h: 0.2 }
+    const got = moveRect(rect, { dx: 500, dy: 500 }, PAGE)
+    expect(got.x).toBeCloseTo(0.7)
+    expect(got.y).toBeCloseTo(0.8)
+    expect(got.w).toBe(0.3)
+    expect(got.h).toBe(0.2)
+  })
+
+  it('左上越界时夹到 0', () => {
+    const rect = { x: 0.3, y: 0.3, w: 0.2, h: 0.2 }
+    const got = moveRect(rect, { dx: -1000, dy: -1000 }, PAGE)
+    expect(got.x).toBe(0)
+    expect(got.y).toBe(0)
+    expect(got.w).toBe(0.2)
+    expect(got.h).toBe(0.2)
+  })
+
+  it('通栏框在该轴不可移动', () => {
+    const rect = { x: 0, y: 0.2, w: 1, h: 0.2 }
+    const got = moveRect(rect, { dx: 60, dy: 10 }, PAGE)
+    expect(got.x).toBe(0)
+    expect(got.y).toBeCloseTo(0.3)
+  })
+
+  it('页盒尺寸非法时原样返回', () => {
+    const rect = { x: 0.2, y: 0.2, w: 0.5, h: 0.5 }
+    expect(moveRect(rect, { dx: 10, dy: 10 }, { width: 0, height: 0 })).toEqual(rect)
   })
 })
 

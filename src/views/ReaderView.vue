@@ -123,6 +123,7 @@
               :page="page"
               :book-title="bookTitle"
               :selectable="ai.selecting"
+              :visible="!aiOverlayHidden"
             />
           </div>
         </div>
@@ -437,9 +438,67 @@ function onAiMenuAction(action: AiMenuAction): void {
   }
 }
 
-/** 翻页 / 重排期间淡出覆盖层：卷曲动画（z1）不得与译文框（z2）叠在一起 */
-function setAiOverlayFading(on: boolean): void {
-  rootEl.value?.classList.toggle('ai-overlay-fading', on)
+/**
+ * 译文覆盖层门控（单点）：渲染中与卷曲动画中一律不显示，之后当前页还要再停留
+ * AI_OVERLAY_SETTLE_MS 才恢复显示——连翻时每轮渲染/动画都会重置计时，
+ * 只有真正停手 300ms 才让译文框出现，避免框随动画在页面上闪现抖动。
+ */
+const AI_OVERLAY_SETTLE_MS = 300
+/** 门控持有数：渲染与动画可能交错，计数归零才开始停留计时 */
+let aiOverlayHolds = 0
+/** 停留计时器：非空 = 仍在等当前页「稳住」 */
+let aiOverlayTimer: ReturnType<typeof setTimeout> | null = null
+/** 门控结果（响应式）：为真时译文框根本不渲染——只靠 opacity 淡出会留下「先渲染一帧再消失」的闪烁 */
+const aiOverlayHidden = ref(false)
+
+function syncAiOverlayFading(): void {
+  const hidden = aiOverlayHolds > 0 || aiOverlayTimer !== null
+  aiOverlayHidden.value = hidden
+  rootEl.value?.classList.toggle('ai-overlay-fading', hidden)
+}
+
+function clearAiOverlaySettle(): void {
+  if (aiOverlayTimer === null) return
+  clearTimeout(aiOverlayTimer)
+  aiOverlayTimer = null
+}
+
+/** 开始 / 重置停留计时：门控未撤时不计时（撤出时会重新起算） */
+function startAiOverlaySettle(): void {
+  clearAiOverlaySettle()
+  if (aiOverlayHolds > 0) return
+  aiOverlayTimer = setTimeout(() => {
+    aiOverlayTimer = null
+    syncAiOverlayFading()
+  }, AI_OVERLAY_SETTLE_MS)
+}
+
+/** 进入门控：立刻淡出，并作废尚未到期的停留计时（新画面即将上屏） */
+function holdAiOverlay(): void {
+  aiOverlayHolds++
+  clearAiOverlaySettle()
+  syncAiOverlayFading()
+}
+
+/** 退出门控：计数归零后重新开始 300ms 停留计时 */
+function releaseAiOverlay(): void {
+  aiOverlayHolds = Math.max(0, aiOverlayHolds - 1)
+  startAiOverlaySettle()
+  syncAiOverlayFading()
+}
+
+/** 兜底：门控持有数意外失衡时直接撤掉门控，避免译文框永久隐身 */
+function resetAiOverlayGate(): void {
+  aiOverlayHolds = 0
+  clearAiOverlaySettle()
+  syncAiOverlayFading()
+}
+
+/** 播卷曲并把译文覆盖层一并门控：动画落定后才允许进入 300ms 停留计时 */
+function playTurnCurlHoldingAi(options: Parameters<typeof playTurnCurl>[0]): void {
+  holdAiOverlay()
+  const curl = playTurnCurl(options)
+  void curl.done.then(() => releaseAiOverlay())
 }
 
 const loadError = ref('')
@@ -660,6 +719,7 @@ onBeforeUnmount(() => {
   clearBurstSession()
   cancelPrefetch()
   cancelTurnCurl()
+  resetAiOverlayGate() // 门控计数与计时一并归零：卸载后不应再有残留的隐藏状态
   clearCache()
   stopTracking() // 结算并停止阅读计时
   clearAiNotice()
@@ -737,8 +797,24 @@ function renderSliderFrame(): void {
   })
 }
 
-/** 单轮翻页：世代号保证「最新请求胜出」，旧轮次在每个 await 检查点静默退出 */
+/**
+ * 翻页入口：门控必须【同步】进入。本函数由 currentDisplayPages 的 pre-watch 调用，
+ * 早于新页 DOM 更新——若等到渲染完再淡出，新页的框会先完整画一帧再消失（闪烁）。
+ * 整轮过程持有门控，卷曲动画由 playTurnCurlHoldingAi 另行加持有，
+ * 因此计数归零 = 「渲染落定且动画结束」，此时才开始 300ms 停留计时。
+ */
 async function runTurnPass(): Promise<void> {
+  if (isVertical.value || !bookReady) return
+  holdAiOverlay()
+  try {
+    await runTurnPassInner()
+  } finally {
+    releaseAiOverlay()
+  }
+}
+
+/** 单轮翻页：世代号保证「最新请求胜出」，旧轮次在每个 await 检查点静默退出 */
+async function runTurnPassInner(): Promise<void> {
   // 上→下：纵向连续滚动由 VerticalScrollView 接管，不进入 policy / 快照 / 卷曲管线
   if (isVertical.value) return
   const gen = ++turnGen
@@ -790,14 +866,8 @@ async function runTurnPass(): Promise<void> {
   // 不再渲染中间页——pdf.js 任务不可取消，串行后真正执行的只有首、末两页
   await renderChain
   if (gen !== turnGen) return // 更新请求已接管：不做任何收尾动作
-  // 新页即将上屏：先淡出译文覆盖层（旧框属于旧页位置），落定后统一恢复
-  setAiOverlayFading(true)
-  let painted = false
-  try {
-    painted = await renderCurrentSpread({ fade: !decision.burst })
-  } finally {
-    setAiOverlayFading(false)
-  }
+  // 新页即将上屏：入口已在门控中，这里只负责渲染（隐藏由 runTurnPass 的 finally 收口）
+  const painted = await renderCurrentSpread({ fade: !decision.burst })
   if (gen !== turnGen || !painted) return
 
   // 每轮连翻渲染完成后重置停手计时；到期且无新轮次才补播
@@ -811,7 +881,7 @@ async function runTurnPass(): Promise<void> {
   const toSnap = target ? snapshotForTurn(viewport) : null
   if (!toSnap || !target || !rootEl.value) return
 
-  playTurnCurl({
+  playTurnCurlHoldingAi({
     container: rootEl.value,
     target,
     from: fromSnap,
@@ -867,7 +937,7 @@ function finishBurstCurl(): void {
   const toSnap = snapshotForTurn(viewport)
   if (!toSnap || !fromSnap) return
   const dir: 'forward' | 'back' = finalIndex > startIndex ? 'forward' : 'back'
-  playTurnCurl({
+  playTurnCurlHoldingAi({
     container: rootEl.value,
     target,
     from: fromSnap,
@@ -944,13 +1014,13 @@ watch(
     cancelPrefetch()
     // 纵向由组件的 sizing 监听自行重排重渲
     if (isVertical.value) return
-    await nextTick()
-    // 缩放重排：译文框按百分比自动跟随，重渲期间先淡出避免旧像素与新尺寸同时存在
-    setAiOverlayFading(true)
+    // 缩放重排：译文框按百分比自动跟随，重渲期间不显示（同步进入门控，避免旧像素与新尺寸同帧出现）
+    holdAiOverlay()
     try {
+      await nextTick()
       await renderCurrentSpread()
     } finally {
-      setAiOverlayFading(false)
+      releaseAiOverlay()
     }
   }
 )
@@ -1221,7 +1291,7 @@ async function finishSlide(
   const toSnap = snapshotForTurn(viewport)
   if (!toSnap) return
   const fromRight = (dir === 'forward') === (reader.direction === 'ltr')
-  playTurnCurl({
+  playTurnCurlHoldingAi({
     container: rootEl.value,
     target,
     from: fromSnap,
@@ -1426,8 +1496,8 @@ function onResize() {
     cancelTurnCurl()
     cancelPrefetch()
     // 重排期间淡出译文框，避免旧位置停留的框浮在新页面尺寸上
-    setAiOverlayFading(true)
-    void renderCurrentSpread().finally(() => setAiOverlayFading(false))
+    holdAiOverlay()
+    void renderCurrentSpread().finally(() => releaseAiOverlay())
   }, 200)
 }
 
@@ -1743,9 +1813,17 @@ function onKeydown(e: KeyboardEvent) {
   cursor: default;
 }
 
-/* 翻页 / 重排期间淡出译文覆盖层（作用于子组件根节点） */
+/* 翻页 / 重排 / 停留计时期间隐藏译文覆盖层（作用于子组件根节点）：橡皮筋等残留元素一并隐身 */
 .reader-view.ai-overlay-fading .ai-layer {
   opacity: 0;
+  /* 隐藏必须瞬时：120ms 淡出会与新页首帧叠成「闪一下再消失」 */
+  transition: none;
+}
+
+/* 隐身期间也不吃指针：否则会点到看不见的框 / 选词热区，连带吞掉热区翻页（子元素各自声明了 auto） */
+.reader-view.ai-overlay-fading :deep(.ai-layer),
+.reader-view.ai-overlay-fading :deep(.ai-layer *) {
+  pointer-events: none;
 }
 
 .ai-layer {

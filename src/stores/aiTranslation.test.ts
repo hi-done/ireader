@@ -81,4 +81,28 @@ describe('aiTranslation 落库载荷', () => {
     expect(store.records[0].rect).toEqual(RECORD.rect)
     warn.mockRestore()
   })
+
+  it('拖动位置：落库用新矩形且宽高不变，矩形为纯对象', async () => {
+    const store = useAiTranslationStore()
+    await store.load(1)
+    const next = { x: 0.6, y: 0.5, w: RECORD.rect.w, h: RECORD.rect.h }
+    await store.applyMove(store.records[0], next)
+
+    const payload = lastPayload()
+    expect(isProxy(payload.rect)).toBe(false)
+    expect(payload.rect).toEqual(next)
+    expect(store.records[0].rect).toEqual(next)
+  })
+
+  it('拖动位置落库失败时回滚为原矩形', async () => {
+    const store = useAiTranslationStore()
+    await store.load(1)
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    mock.save.mockRejectedValueOnce(new Error('boom'))
+
+    await store.applyMove(store.records[0], { x: 0.6, y: 0.5, w: 0.3, h: 0.4 })
+
+    expect(store.records[0].rect).toEqual(RECORD.rect)
+    warn.mockRestore()
+  })
 })

@@ -1,4 +1,4 @@
-// AI 框选翻译的纯逻辑：归一化矩形、百分比样式、缩放下限、字号换算
+// AI 框选翻译的纯逻辑：归一化矩形、百分比样式、缩放 / 拖动的位置夹取、字号换算
 // 对应设计文档《20261102-AI框选翻译功能设计方案》§4.1 / §4.3 / §8.1
 // 不依赖 DOM / electron，便于 Vitest 直接覆盖
 
@@ -87,6 +87,28 @@ export function resizeRect(
     y: rect.y,
     w: clamp(rect.w + delta.dx / width, Math.max(minW, 0.01), 1 - rect.x),
     h: clamp(rect.h + delta.dy / height, Math.max(minH, 0.01), 1 - rect.y),
+  }
+}
+
+/**
+ * 拖动框体后的新矩形：宽高原样保留，左上角夹取到页盒内。
+ * 上限必须扣掉宽高：主进程 resolveRect 会按 (1 - x) 截断 w，越界的 x 会让框体被悄悄改窄。
+ * delta 为相对按下点的像素位移，page 为显示盒像素尺寸。
+ */
+export function moveRect(
+  rect: AiRect,
+  delta: { dx: number; dy: number },
+  page: { width: number; height: number }
+): AiRect {
+  const { width, height } = page
+  if (!(width > 0) || !(height > 0)) return rect
+  const maxX = Math.max(0, 1 - rect.w)
+  const maxY = Math.max(0, 1 - rect.h)
+  return {
+    x: clamp(rect.x + delta.dx / width, 0, maxX),
+    y: clamp(rect.y + delta.dy / height, 0, maxY),
+    w: rect.w,
+    h: rect.h,
   }
 }
 

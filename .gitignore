@@ -37,3 +37,4 @@ lerna-debug.log*
 *.sln
 *.sw?
 specs/drafts
+.probe

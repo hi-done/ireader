@@ -154,11 +154,17 @@ export const useAiTranslationStore = defineStore('aiTranslation', () => {
     }
   }
 
-  /** 右下角拖拽松手后落库一次（拖动过程只改本地样式） */
-  async function applyResize(rec: AiTranslationRecord, rect: AiRect): Promise<void> {
+  /**
+   * 矩形落库：本地先行 → ai:save 整行覆盖 → 失败回滚（缩放与拖动共用）。
+   * 入参来自组件内的响应式预览对象：先转纯对象，赋值与落库都用副本。
+   */
+  async function commitRect(
+    rec: AiTranslationRecord,
+    rect: AiRect,
+    failMessage: string
+  ): Promise<void> {
     const target = findRecord(rec.id)
     if (!target) return
-    // 入参来自组件内的响应式预览对象：先转纯对象，赋值与落库都用副本
     const next = { ...rect }
     const before = { ...target.rect }
     target.rect = next
@@ -167,8 +173,18 @@ export const useAiTranslationStore = defineStore('aiTranslation', () => {
     } catch (e) {
       const rollback = findRecord(rec.id)
       if (rollback) rollback.rect = before
-      console.warn('[ai] 译文框尺寸保存失败', e)
+      console.warn(failMessage, e)
     }
+  }
+
+  /** 右下角拖拽松手后落库一次（拖动过程只改本地样式） */
+  async function applyResize(rec: AiTranslationRecord, rect: AiRect): Promise<void> {
+    await commitRect(rec, rect, '[ai] 译文框尺寸保存失败')
+  }
+
+  /** 框体整体拖动松手后落库一次（只换 x/y，宽高由 moveRect 原样带回） */
+  async function applyMove(rec: AiTranslationRecord, rect: AiRect): Promise<void> {
+    await commitRect(rec, rect, '[ai] 译文框位置保存失败')
   }
 
   async function remove(rec: AiTranslationRecord): Promise<void> {
@@ -256,6 +272,7 @@ export const useAiTranslationStore = defineStore('aiTranslation', () => {
     selectRect,
     setCollapsed,
     applyResize,
+    applyMove,
     remove,
     removePending,
     prunePending,
