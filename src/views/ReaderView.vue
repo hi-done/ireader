@@ -220,6 +220,12 @@ import { BURST_SETTLE_MS, canReplayBurst, PDF_ANIM_BUDGET_MS, TurnPolicy } from 
 import { createPageDocumentSource } from '../services/verticalSource'
 import type { VerticalPageSource, VerticalRow, VerticalSizing } from '../services/verticalLayout'
 import { cancelTurnCurl, isTurnCurlActive, playTurnCurl } from '../services/turnAnimator'
+import {
+  attachTurnCover,
+  doubleRaf,
+  isTurnCoverActive,
+  removeTurnCover,
+} from '../services/turnCover'
 import { startTracking, stopTracking, setTrackingPaused } from '../services/readingTracker'
 import {
   normalizeWheelDelta,
@@ -527,11 +533,14 @@ let turnGen = 0
 /** 书本已打开并完成首帧渲染 */
 let bookReady = false
 const policy = new TurnPolicy()
-// 连翻补播会话：连翻首帧快照 + 起点页，停手后补播唯一一次卷曲（与滑块松手补播同构）
+// 连翻补播会话：连翻首帧快照 + 起点页，停手后补播唯一一次卷曲（与滑块松手补播同构）。
+// 首帧快照同时充当「补播遮罩」：连翻期把阅读区冻结在起点画面，避免先闪目标页再播旧页卷曲
 let burstFromSnap: HTMLCanvasElement | null = null
 let burstFromViewport: boolean | null = null
 let burstStartIndex: number | null = null
 let burstSettleTimer: ReturnType<typeof setTimeout> | null = null
+/** 会话级译文框门控是否已持有（遮罩期译文框不得浮在冻结画面上） */
+let burstAiHeld = false
 /** 停手后延迟预取：连翻期间主线程优先服务当前页 */
 const PREFETCH_DELAY_MS = 150
 /** 当前在飞预取画布：只作废 token 无法中止已提交的渲染，必须按画布取消 */
@@ -821,7 +830,11 @@ async function runTurnPassInner(): Promise<void> {
   if (!bookReady) return // 开书首帧由 openBook 负责
   const startedAt = performance.now()
   const index = reader.currentIndex
-  if (!reader.spreads[index]) return
+  if (!reader.spreads[index]) {
+    // 页组不存在 = 不会再有连翻轮次来重新计时：遮罩必须就地揭除，否则画面永久冻结
+    clearBurstSession()
+    return
+  }
 
   cancelPrefetch() // 连翻时不给预取抢主线程
 
@@ -849,8 +862,9 @@ async function runTurnPassInner(): Promise<void> {
   })
 
   const viewport = decision.mode === 'animate' ? isVerticallyScrollable() : false
-  // 恢复正常单次翻页：上一段连翻序列已结束，残留会话不得跨段生效
-  if (decision.mode === 'animate') clearBurstSession()
+  // 恢复正常单次翻页 / 非翻页轮次（模式切换、方向切换、缩放重排）：上一段连翻序列已结束，
+  // 残留会话与遮罩不得跨段生效——这些轮次不会再 scheduleBurstSettle，遮罩会永久停留
+  if (decision.mode === 'animate' || !decision.burst) clearBurstSession()
   // 瞬切路径不做任何全屏快照：连翻卡顿主要来自每轮两张全屏合成
   const fromSnap = decision.mode === 'animate' ? snapshotForTurn(viewport) : null
   // 连翻首帧：瞬切路径仅此一次合成快照（10~30ms），供停手后补播唯一一次卷曲
@@ -859,6 +873,8 @@ async function runTurnPassInner(): Promise<void> {
     burstFromSnap = snapshotForTurn(burstViewport)
     burstFromViewport = burstViewport
     burstStartIndex = shown?.index ?? reader.currentIndex
+    // 先遮后渲染：起点画面贴到阅读区上，瞬切结果在遮罩之下更新，目标页不会提前露出
+    coverBurstStart(burstViewport, burstFromSnap)
   }
 
   await nextTick()
@@ -891,6 +907,25 @@ async function runTurnPassInner(): Promise<void> {
   })
 }
 
+/** 连翻补播遮罩上屏 + 译文框会话级门控：起点画面盖住阅读区，瞬切渲染在遮罩之下更新 */
+function coverBurstStart(viewport: boolean, fromSnap: HTMLCanvasElement | null): void {
+  const root = rootEl.value
+  const target = viewport ? pageAreaEl.value : pageContentEl.value
+  if (!root || !target || !fromSnap) return // 合成失败：无遮罩 → 闸门拒绝补播，退化为纯瞬切
+  attachTurnCover({ container: root, target, canvas: fromSnap, owner: 'burst' })
+  if (!burstAiHeld) {
+    burstAiHeld = true
+    holdAiOverlay() // 遮罩下 DOM 已是新页，译文框浮上来会与新底图错位
+  }
+}
+
+/** 释放会话级译文框门控（幂等）：遮罩揭除后才允许译文框重新淡入 */
+function releaseBurstAiHold(): void {
+  if (!burstAiHeld) return
+  burstAiHeld = false
+  releaseAiOverlay()
+}
+
 /** 停手计时：每轮连翻渲染完成后重置；到期且无新轮次才补播（新输入会再次重置） */
 function scheduleBurstSettle(gen: number): void {
   if (burstSettleTimer) clearTimeout(burstSettleTimer)
@@ -908,20 +943,30 @@ function scheduleBurstSettle(gen: number): void {
 
 /** 停手补播：用连翻首帧卷到最终页（不导航；页面已由瞬切轮次渲染到位） */
 function finishBurstCurl(): void {
+  // 先读走会话快照并清字段：遮罩要留到卷曲首帧画出后才揭，不能走带揭罩的会话清理
   const fromSnap = burstFromSnap
   const startIndex = burstStartIndex
   const viewport = burstFromViewport
-  clearBurstSession()
-  if (startIndex == null || viewport == null) return
+  burstFromSnap = null
+  burstFromViewport = null
+  burstStartIndex = null
+  if (startIndex == null || viewport == null) {
+    clearBurstSession()
+    return
+  }
   const finalIndex = reader.currentIndex
   const target = viewport ? pageAreaEl.value : pageContentEl.value
+  const toSnap = viewport != null ? snapshotForTurn(viewport) : null
   if (
     !rootEl.value ||
     !target ||
+    !toSnap ||
+    !fromSnap ||
     !canReplayBurst({
       tokenValid: true, // 新轮次已由 scheduleBurstSettle 的 gen 校验拦截
       reducedMotion,
-      hasSnapshot: !!fromSnap,
+      hasSnapshot: true,
+      covered: isTurnCoverActive(),
       startIndex,
       finalIndex,
       startCfi: null, // PDF 以页组索引判重
@@ -932,10 +977,11 @@ function finishBurstCurl(): void {
       dragging: sliderActive,
     })
   ) {
+    // 拒绝补播：立即揭罩（遮罩内容即当前页，揭除无视觉跳变）
+    removeTurnCover('burst', fromSnap ?? undefined)
+    releaseBurstAiHold()
     return
   }
-  const toSnap = snapshotForTurn(viewport)
-  if (!toSnap || !fromSnap) return
   const dir: 'forward' | 'back' = finalIndex > startIndex ? 'forward' : 'back'
   playTurnCurlHoldingAi({
     container: rootEl.value,
@@ -945,9 +991,14 @@ function finishBurstCurl(): void {
     fromRight: (dir === 'forward') === (reader.direction === 'ltr'),
     zIndex: 1, // 低于控制栏 z3，与主翻页 / 滑块补播一致
   })
+  // 卷曲首帧已画出起点全幅 → 双 rAF 后揭罩（带画布身份校验，绝不揭后续新会话的遮罩）
+  void doubleRaf().then(() => {
+    removeTurnCover('burst', fromSnap)
+    releaseBurstAiHold()
+  })
 }
 
-/** 清空连翻补播会话（换书 / 窗口尺寸变化 / 滑块接管 / 卸载） */
+/** 清空连翻补播会话（换书 / 窗口尺寸变化 / 滑块接管 / 卸载）：会话结束必揭罩，否则画面永久冻结 */
 function clearBurstSession(): void {
   if (burstSettleTimer) {
     clearTimeout(burstSettleTimer)
@@ -956,6 +1007,8 @@ function clearBurstSession(): void {
   burstFromSnap = null
   burstFromViewport = null
   burstStartIndex = null
+  removeTurnCover('burst')
+  releaseBurstAiHold()
 }
 
 /** 将当前显示画面合成为一张快照。

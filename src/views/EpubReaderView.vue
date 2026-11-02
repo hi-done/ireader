@@ -164,8 +164,15 @@ import type { SelectOption } from '../services/selectMenu'
 import SelectMenu from '../components/ui/SelectMenu.vue'
 import CardTip from '../components/ui/CardTip.vue'
 import { useHoverTip } from '../components/ui/useHoverTip'
-import { BURST_SETTLE_MS, canReplayBurst, pickEpubAnimBudget, TurnPolicy } from '../services/turnPolicy'
+import {
+  BURST_COVER_TIMEOUT_MS,
+  BURST_SETTLE_MS,
+  canReplayBurst,
+  pickEpubAnimBudget,
+  TurnPolicy,
+} from '../services/turnPolicy'
 import { cancelTurnCurl, isTurnCurlActive, playTurnCurl } from '../services/turnAnimator'
+import { attachTurnCover, doubleRaf, removeTurnCover } from '../services/turnCover'
 import { appLocale, t } from '../i18n'
 import { localizeError } from '../i18n/errors'
 import { compareTitles } from '../services/libraryList'
@@ -553,13 +560,15 @@ let drainPromise: Promise<void> | null = null
 let navIndex: number | null = null
 /** 换书 / 尺寸变化 / 卸载时递增，旧流程在检查点退出 */
 let openSeq = 0
-let freezeEl: HTMLCanvasElement | null = null
 /** 连续翻页判定：连翻瞬切、停手后恢复动画 */
 const policy = new TurnPolicy()
-// 连翻补播会话：记录连翻序列起点与首帧快照，停手后补播唯一一次卷曲（与滑块松手补播同构）
+// 连翻补播会话：记录连翻序列起点与首帧快照，停手后补播唯一一次卷曲（与滑块松手补播同构）。
+// 首帧快照同时充当「补播遮罩」：连翻期把阅读区冻结在起点画面，避免先闪目标页再播旧页卷曲
 let burstStartIndex: number | null = null
 let burstStartCfi: string | null = null
-let burstFromPromise: Promise<HTMLCanvasElement | null> | null = null
+let burstFrom: HTMLCanvasElement | null = null
+/** 本会话遮罩是否已上屏；false = 截图失败/超时/减弱动态 → 补播闸门拒绝 */
+let burstCovered = false
 let burstSettleTimer: ReturnType<typeof setTimeout> | null = null
 
 // 外部定位变化（切版式/方向/字号/缩放重分页等）时同步权威页索引；
@@ -571,10 +580,7 @@ watch(
   }
 )
 
-/** 双 rAF：等一帧提交后的合成输出更新（截图前瞬隐控制栏后需等它生效） */
-function doubleRaf(): Promise<void> {
-  return new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
-}
+/** 双 rAF 复用 turnCover.doubleRaf（卷曲首帧画出后揭罩，避免露出遮罩下的新页） */
 
 /**
  * 等一次 relocated 事件（store.current 已刷新后 resolve）；超时兜底不阻断。
@@ -600,26 +606,15 @@ function waitNextRelocated(timeoutMs = 500): Promise<void> {
   })
 }
 
-/** 冻结帧上屏：旧画面快照绝对定位铺满 .epub-area；不拦截交互（连翻由队列兜底） */
-function attachFreeze(area: HTMLElement, from: HTMLCanvasElement) {
-  freezeEl = from
-  from.style.position = 'absolute'
-  from.style.left = '0'
-  from.style.top = '0'
-  from.style.zIndex = '1' // 高于 iframe 内容；低于控制栏 z2（与覆盖层同级，覆盖层后 append 故在其上）
-  from.style.pointerEvents = 'none'
-  area.appendChild(from)
+/** 单次动画的冻结帧上屏：遮罩几何 / 层级 / 幂等揭除统一由 turnCover 管理 */
+function attachFreeze(container: HTMLElement, area: HTMLElement, from: HTMLCanvasElement) {
+  attachTurnCover({ container, target: area, canvas: from, owner: 'turn' })
 }
 
-function removeFreeze() {
-  freezeEl?.remove()
-  freezeEl = null
-}
-
-/** 取消进行中的卷曲并揭除冻结帧（作废流程后的统一清理） */
+/** 取消进行中的卷曲并揭除单次动画的冻结帧（作废流程后的统一清理）；绝不揭连翻遮罩 */
 function discardTurn() {
   cancelTurnCurl() // 底层页面已是动画终点；内部同步兑现 done，唤醒等待中的队列
-  removeFreeze()
+  removeTurnCover('turn')
 }
 
 /** 夹取到有效页范围；总页数未知（locations 未就绪）时只保证非负，边界交给 epub.js */
@@ -714,7 +709,11 @@ async function doDrainTurns(token: number): Promise<void> {
     const target = store.turnTarget(from, delta)
     const effective = target - from
     navIndex = target
-    if (effective === 0) continue // 首/尾：不导航、不动画
+    if (effective === 0) {
+      // 首/尾无位移也须重置停手计时：requestTurn 已清掉计时器，漏掉会让遮罩永久停留
+      if (burstStartIndex != null) scheduleBurstSettle(token)
+      continue
+    }
     pushNavDiag(`[spread] turn from=${from} delta=${delta} target=${target}`)
 
     const decision = policy.decide({
@@ -740,8 +739,13 @@ async function doDrainTurns(token: number): Promise<void> {
       }
     } else {
       discardTurn()
-      // 连翻首帧：记录起点并异步截取起点画面（与跳页并行，不阻塞连翻）
-      if (decision.burst) beginBurstSession(from)
+      // 非连翻瞬切（减弱动态 / 拖动）：上一段连翻序列已结束，遮罩不得跨段残留
+      if (!decision.burst) clearBurstSession()
+      // 连翻首帧：先截起点画面并上屏遮罩，再导航——顺序反了就会先露出目标页
+      if (decision.burst) {
+        const covered = await coverBurstStart(from, token)
+        if (!covered) clearBurstSession() // 无遮罩不补播，退化为纯瞬切
+      }
       try {
         await jumpTo(target, delta, token)
       } catch (e) {
@@ -754,20 +758,41 @@ async function doDrainTurns(token: number): Promise<void> {
   }
 }
 
-/** 连翻会话首帧：记录起点并把起点画面截图挂到后台（不 await，与跳页并行） */
-function beginBurstSession(startIndex: number): void {
-  if (burstStartIndex != null) return
+/**
+ * 连翻会话首帧：切断点画面并**先上屏遮罩**，再由调用方导航。
+ * 必须「先遮后导」：不等待截图就导航，目标页会先露出，停手补播就成了「先闪目标页再播旧页卷曲」。
+ * 等待期屏幕本来就是这张画面，遮罩与之相同，用户不可感。
+ * @returns 是否有遮罩在屏；false = 截图失败 / 超时 / 减弱动态 / 会话已作废 → 调用方须放弃补播
+ */
+async function coverBurstStart(startIndex: number, token: number): Promise<boolean> {
+  if (burstStartIndex != null) return burstCovered // 会话已建立：沿用已有遮罩
+  const area = epubAreaEl.value
+  const root = rootEl.value
+  if (!area || !root || reducedMotion) return false
   burstStartIndex = startIndex
   burstStartCfi = store.current?.cfi ?? null
-  const area = epubAreaEl.value
-  if (!area || reducedMotion) return
   const rect = area.getBoundingClientRect()
-  burstFromPromise = captureRegionToCanvas({
+  const shot = captureRegionToCanvas({
     x: rect.left,
     y: rect.top,
     width: rect.width,
     height: rect.height,
   }).catch(() => null)
+  // 超时即放弃遮罩（宁可这一次不播动画，也不让画面先闪目标页）
+  let timer: ReturnType<typeof setTimeout> | null = null
+  const timeout = new Promise<null>((resolve) => {
+    timer = setTimeout(() => resolve(null), BURST_COVER_TIMEOUT_MS)
+  })
+  const from = await Promise.race([shot, timeout])
+  if (timer) clearTimeout(timer)
+  if (!from || token !== openSeq) {
+    pushNavDiag(`[curl] burst cover fail ${from ? 'stale' : 'shot'}`)
+    return false
+  }
+  attachTurnCover({ container: root, target: area, canvas: from, owner: 'burst' })
+  burstFrom = from
+  burstCovered = true
+  return true
 }
 
 /** 停手计时：每次连翻瞬切后重置；到期且队列空闲才补播（新输入会再次重置） */
@@ -794,22 +819,21 @@ function scheduleBurstSettle(token: number): void {
 
 /** 停手补播：用连翻首帧卷到最终页（不导航；页面已在瞬切阶段到位） */
 async function finishBurstCurl(): Promise<void> {
+  // 先读走会话快照并清字段：遮罩要留到卷曲首帧画出后才揭，不能走带揭罩的会话清理
   const startIndex = burstStartIndex
   const startCfi = burstStartCfi
-  const fromPromise = burstFromPromise
+  const from = burstFrom
+  const covered = burstCovered
   const token = openSeq
   burstStartIndex = null
   burstStartCfi = null
-  burstFromPromise = null
-  if (startIndex == null || !fromPromise) return
-  const from = await fromPromise // 截图通常已就绪；未就绪则等它，期间新输入由闸门拦截
-  // 等待期间又开始了新的连翻序列：旧会话首帧已过期，交给新序列补播
-  if (burstStartIndex != null) return
+  burstFrom = null
+  burstCovered = false
+  if (startIndex == null || !from) return
   const area = epubAreaEl.value
   const root = rootEl.value
   const finalIndex = navIndex ?? store.current?.index ?? 0
   if (
-    !from ||
     !area ||
     !root ||
     !store.current ||
@@ -817,6 +841,7 @@ async function finishBurstCurl(): Promise<void> {
       tokenValid: token === openSeq,
       reducedMotion,
       hasSnapshot: true,
+      covered,
       startIndex,
       finalIndex,
       startCfi,
@@ -827,17 +852,22 @@ async function finishBurstCurl(): Promise<void> {
       dragging: sliderDragging,
     })
   ) {
-    pushNavDiag('[curl] burst skip')
+    // 拒绝补播：立即揭罩（遮罩内容即当前页，揭除无视觉跳变）
+    removeTurnCover('burst', from)
+    pushNavDiag(`[curl] burst skip covered=${covered}`)
     return
   }
   const dir: 'forward' | 'back' = finalIndex > startIndex ? 'forward' : 'back'
   const fromRight = (dir === 'forward') === (store.direction === 'ltr')
   pushNavDiag(`[curl] burst play ${dir} from=${startIndex} to=${finalIndex}`)
   // 补播卷曲归单例管理：期间的新输入会揭除它并让队列继续消费
-  await playTurnCurl({ container: root, target: area, from, fromRight, zIndex: 1 }).done
+  const handle = playTurnCurl({ container: root, target: area, from, fromRight, zIndex: 1 })
+  // 卷曲首帧已画出起点全幅 → 双 rAF 后揭罩（无缝）；带画布身份校验，绝不揭后续新会话的遮罩
+  void doubleRaf().then(() => removeTurnCover('burst', from))
+  await handle.done
 }
 
-/** 清空连翻补播会话（换书 / 尺寸变化 / 滑块接管 / 卸载） */
+/** 清空连翻补播会话（换书 / 尺寸变化 / 滑块接管 / 卸载）：会话结束必揭罩，否则画面永久冻结 */
 function clearBurstSession(): void {
   if (burstSettleTimer) {
     clearTimeout(burstSettleTimer)
@@ -845,7 +875,9 @@ function clearBurstSession(): void {
   }
   burstStartIndex = null
   burstStartCfi = null
-  burstFromPromise = null
+  burstFrom = null
+  burstCovered = false
+  removeTurnCover('burst')
 }
 
 /** 净位移一次到位：图片型走组表推演，文字型 locations 就绪时 goTo；落点以 relocated 为准 */
@@ -946,7 +978,7 @@ async function animatedTurn(delta: number, token: number): Promise<void> {
 
     // 2. 冻结帧先上屏（实时画面仍是旧页，视觉无缝），再驱动 epub.js 重建视图
     const prevCfi = store.current?.cfi
-    if (from) attachFreeze(area, from)
+    if (from) attachFreeze(root, area, from)
     const relocated = waitNextRelocated()
     if (store.layout === 'pre-paginated') {
       // 双页单步交给直通 next/prev（配对由 epubjs 负责）；单页走 goTo
@@ -971,7 +1003,7 @@ async function animatedTurn(delta: number, token: number): Promise<void> {
     //    用 CFI 而非 index 判定：文字型书的 index 是 location 块索引，一屏翻页可能仍在同一块内
     if (!from || !store.current || store.current.cfi === prevCfi) {
       pushNavDiag(`[curl] no-move skip from=${from ? 'ok' : 'null'} d=${Math.round(tNav - t0)}ms`)
-      removeFreeze()
+      removeTurnCover('turn', from ?? undefined)
       return
     }
 
@@ -1001,16 +1033,14 @@ async function animatedTurn(delta: number, token: number): Promise<void> {
       from,
       fromRight,
       zIndex: 1, // 低于控制栏 z2：卷曲期间工具栏保持叠在动画之上，不再遮挡
-      onDone: removeFreeze,
+      onDone: () => removeTurnCover('turn', from ?? undefined),
     })
     // 卷曲首帧已画出旧页全幅 → 双 rAF 后揭除冻结帧（无缝）；仅移除本次自己贴上的那份
-    void doubleRaf().then(() => {
-      if (freezeEl === from) removeFreeze()
-    })
+    void doubleRaf().then(() => removeTurnCover('turn', from ?? undefined))
     await handle.done // 等到卷曲结束或被新输入揭除，队列才继续消费下一轮
   } finally {
     // throw / 提前返回兜底：只揭除本轮贴上的冻结帧，避免误删后续流程的快照
-    if (freezeEl === from) removeFreeze()
+    removeTurnCover('turn', from ?? undefined)
   }
 }
 

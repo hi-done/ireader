@@ -97,6 +97,12 @@ export class TurnPolicy {
 /** 连翻停手到补播的静默时长（ms）：必须大于 RAPID_GAP_MS，否则会把下一次连点误判为停手 */
 export const BURST_SETTLE_MS = 220
 
+/**
+ * 连翻首帧截图等待上限（ms）。全屏 capturePage 往返实测 200~300ms，
+ * 超时即视为无遮罩：放弃补播、退化为纯瞬切（绝不出现「先闪目标页再播旧页卷曲」）
+ */
+export const BURST_COVER_TIMEOUT_MS = 600
+
 /** 连翻补播闸门的输入：全部由调用方采样，便于单测覆盖边界 */
 export interface BurstReplayGate {
   /** 会话所属文档仍有效（EPUB：token === openSeq；PDF：turnGen 未变） */
@@ -104,6 +110,11 @@ export interface BurstReplayGate {
   reducedMotion: boolean
   /** 是否拿到连翻首帧快照 */
   hasSnapshot: boolean
+  /**
+   * 补播遮罩是否已在屏（isTurnCoverActive）。补播动画的起点必须等于屏幕当前画面：
+   * 遮罩缺失时目标页已露出，再播旧页卷曲就是「先闪目标页再播动画」，必须拒绝
+   */
+  covered: boolean
   /** 连翻起点页；null = 未建立会话 */
   startIndex: number | null
   /** 最终落点页 */
@@ -127,6 +138,8 @@ export interface BurstReplayGate {
  */
 export function canReplayBurst(gate: BurstReplayGate): boolean {
   if (!gate.tokenValid || gate.reducedMotion || !gate.hasSnapshot) return false
+  // 核心不变量：补播起点必须等于屏幕画面；无遮罩即目标页已露出，绝不补播
+  if (!gate.covered) return false
   if (gate.startIndex == null) return false
   if (gate.queueBusy || gate.pendingDelta !== 0 || gate.curlActive || gate.dragging) return false
   if (gate.finalIndex === gate.startIndex) return false

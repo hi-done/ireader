@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  BURST_COVER_TIMEOUT_MS,
   BURST_SETTLE_MS,
   canReplayBurst,
   EPUB_ANIM_BUDGET_MS,
@@ -134,12 +135,13 @@ describe('pickEpubAnimBudget - 视口面积分级', () => {
 })
 
 describe('canReplayBurst - 连翻补播闸门', () => {
-  /** 测试用闸门上下文：有位移、有快照、无干扰 */
+  /** 测试用闸门上下文：有位移、有快照、已遮罩、无干扰 */
   function gate(partial: Partial<BurstReplayGate> = {}): BurstReplayGate {
     return {
       tokenValid: true,
       reducedMotion: false,
       hasSnapshot: true,
+      covered: true,
       startIndex: 3,
       finalIndex: 8,
       startCfi: 'epubcfi(/6/14!/4/2/2[c01])',
@@ -172,6 +174,12 @@ describe('canReplayBurst - 连翻补播闸门', () => {
     expect(canReplayBurst(gate({ hasSnapshot: false }))).toBe(false)
   })
 
+  it('补播遮罩不在屏时拒绝（否则会先闪目标页再播动画）', () => {
+    expect(canReplayBurst(gate({ covered: false }))).toBe(false)
+    // 其余条件齐全也不得放行：遮罩是本方案的硬前置
+    expect(canReplayBurst(gate({ covered: false, startCfi: null, finalCfi: null }))).toBe(false)
+  })
+
   it('队列仍在消费或还有待执行位移时拒绝', () => {
     expect(canReplayBurst(gate({ queueBusy: true }))).toBe(false)
     expect(canReplayBurst(gate({ pendingDelta: 1 }))).toBe(false)
@@ -192,5 +200,9 @@ describe('canReplayBurst - 连翻补播闸门', () => {
 
   it('补播静默时长必须大于连翻判定间隔', () => {
     expect(BURST_SETTLE_MS).toBeGreaterThan(RAPID_GAP_MS)
+  })
+
+  it('连翻首帧截图等待上限必须容纳一次全屏截图往返', () => {
+    expect(BURST_COVER_TIMEOUT_MS).toBeGreaterThanOrEqual(300)
   })
 })
