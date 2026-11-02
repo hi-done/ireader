@@ -237,7 +237,13 @@ onBeforeUnmount(() => {
 })
 
 async function save() {
-  await settingsStore.patch({ ...form })
+  try {
+    await settingsStore.patch({ ...form })
+  } catch (e) {
+    // 静默保存语义保持不变：失败只记日志（读不到勾选值等问题由「表单未落库」体现），
+    // 不弹窗打断设置流程；正常情况下失败仅剩主进程异常
+    console.error('[settings] 保存设置失败', e)
+  }
 }
 
 // —— 应用内更新（「关于」分组）：本地状态与主进程 updaterService 同步 ——

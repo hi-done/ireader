@@ -141,7 +141,7 @@ Get the installer for your platform from the [**Releases**](../../releases) page
 | Preloaded spreads | 0–4 | 2 |
 | Double-page cover as single page | On / off | On |
 
-A per-book progress record overrides the global defaults.
+A per-book progress record overrides the global defaults (the "Cover solo / Cover paired" button in the comic and image-based EPUB reader toolbar overrides it for a single book).
 
 The Data group in Settings provides the reading statistics entry; the About group shows the current version and checks for updates (incremental updates on Windows, browser download on macOS).
 

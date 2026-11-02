@@ -166,6 +166,8 @@ export const en = {
   'reader.nextPage': 'Next page ›',
   'reader.single': 'Single page',
   'reader.double': 'Double page',
+  'reader.coverSolo': 'Cover solo',
+  'reader.coverPair': 'Cover paired',
   'reader.dirLtr': 'Left to right',
   'reader.dirRtl': 'Right to left',
   'reader.dirTtb': 'Top to bottom',

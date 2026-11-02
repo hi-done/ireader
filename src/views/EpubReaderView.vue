@@ -33,6 +33,15 @@
             {{ store.spread === 'always' ? t('reader.double') : t('reader.single') }}
           </button>
         </span>
+        <!-- 单本封面单独成页：仅图片型书双页模式有视觉效果，文字型书该值无意义；
+             文字即当前生效态，与相邻「单页/双页」按钮一致 -->
+        <button
+          v-if="store.layout === 'pre-paginated' && store.spread === 'always'"
+          class="cover-single"
+          @click="store.setCoverSinglePage(!store.coverSinglePage)"
+        >
+          {{ store.coverSinglePage ? t('reader.coverSolo') : t('reader.coverPair') }}
+        </button>
         <SelectMenu
           class="direction-select"
           :model-value="store.direction"
@@ -1465,6 +1474,11 @@ function onKeydown(e: KeyboardEvent) {
 
 .spread-guard {
   display: inline-flex;
+}
+
+/* 单本封面按钮：文案随语言变长（英文 / 日文），禁换行避免顶栏被撑高 */
+.controls .cover-single {
+  white-space: nowrap;
 }
 
 .zoom-select,

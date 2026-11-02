@@ -165,6 +165,8 @@ export const zhCN = {
   'reader.nextPage': '下一页 ›',
   'reader.single': '单页',
   'reader.double': '双页',
+  'reader.coverSolo': '封面单页',
+  'reader.coverPair': '封面并排',
   'reader.dirLtr': '左→右',
   'reader.dirRtl': '右→左',
   'reader.dirTtb': '上→下',

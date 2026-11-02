@@ -11,6 +11,7 @@
 4) 每页只取首图（第二张是站点的下一页预加载，会重复），带 Referer 下载后缓存
 5) 按页序合成 PDF，页面尺寸等比换算，不裁切不缩放
 6) 生成成功后删除下载的图片（含缓存目录），只留 PDF；有缺页时保留图片便于重跑补齐
+7) 退出前清理脚本目录下的 __pycache__（import jsunpack 产生的 .pyc），不留在仓库里
 
 退出码：0 全部成功；2 参数/页面结构错误；3 有缺页但仍生成了 PDF。
 """
@@ -182,6 +183,31 @@ def cleanup_images(images, workdir):
     return removed
 
 
+def cleanup_pycache():
+    """删除脚本目录下的 __pycache__（import jsunpack 时 Python 自动生成的字节码缓存）
+
+    .pyc 对下载速度没有实际帮助，留在 skill 目录里反而可能被误提交进仓库，
+    因此每次运行结束都清掉；删不掉（被占用等）时只跳过，不影响主流程。
+    """
+    cache = os.path.join(os.path.dirname(os.path.abspath(__file__)), "__pycache__")
+    if not os.path.isdir(cache):
+        return 0
+    removed = 0
+    for name in os.listdir(cache):
+        if name.endswith(".pyc"):
+            try:
+                os.remove(os.path.join(cache, name))
+                removed += 1
+            except OSError:
+                pass
+    try:
+        if not os.listdir(cache):
+            os.rmdir(cache)
+    except OSError:
+        pass
+    return removed
+
+
 def main():
     ap = argparse.ArgumentParser(description="yymanhua 章节漫画转单文件 PDF")
     ap.add_argument("--url", required=True, help="章节阅读页 URL，如 http://www.yymanhua.com/m374992/")
@@ -228,4 +254,11 @@ def main():
 if __name__ == "__main__":
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-    sys.exit(main())
+    code = 0
+    try:
+        code = main()
+    finally:
+        # 成功、缺页、报错都清理，避免 .pyc 残留在 skill 目录
+        if cleanup_pycache():
+            log("已清理 Python 字节码缓存: __pycache__")
+    sys.exit(code)

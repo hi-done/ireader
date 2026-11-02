@@ -166,6 +166,8 @@ export const ja = {
   'reader.nextPage': '次のページ ›',
   'reader.single': '単ページ',
   'reader.double': '見開き',
+  'reader.coverSolo': '表紙を単独',
+  'reader.coverPair': '表紙を並べる',
   'reader.dirLtr': '左→右',
   'reader.dirRtl': '右→左',
   'reader.dirTtb': '上→下',

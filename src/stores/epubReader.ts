@@ -77,6 +77,13 @@ export const useEpubReaderStore = defineStore('epubReader', () => {
    * 否则会把当前右页翻成左页（视觉只翻一页）。
    */
   const preSpreads = shallowRef<number[][]>([])
+  /**
+   * 本书「双页封面单独成页」：null = 跟随全局设置；
+   * 非 null 为用户在阅读页显式指定，随进度落盘
+   */
+  const coverSingleOverride = ref<boolean | null>(null)
+  /** 当前生效值（单本覆盖优先）：封面 patch 与跨页组表都读它 */
+  const coverSinglePage = ref(true)
 
   function onRelocated(location: EpubLocation) {
     applyStart(location.start)
@@ -121,7 +128,6 @@ export const useEpubReaderStore = defineStore('epubReader', () => {
     const b = book
     if (!b) return null
     if (isVerticalImageLayout()) return null
-    const settingsStore = useSettingsStore()
     const rect = element.getBoundingClientRect()
     const r = renderEpub(b, element, {
       width: Math.round(rect.width),
@@ -143,14 +149,14 @@ export const useEpubReaderStore = defineStore('epubReader', () => {
         getZoom: () => zoom.value,
         getSpread: () => spread.value,
         getTotalPages: () => spinePageCount(),
-        getCoverSingle: () => settingsStore.settings.coverSinglePage,
+        getCoverSingle: () => coverSinglePage.value,
       })
-      // 全局设置：双页模式封面是否单独成页（内部等待 rendition.started 后 patch）
-      await applyCoverSinglePage(r, settingsStore.settings.coverSinglePage)
+      // 封面策略：补丁常驻、按当前生效值分派，切换单本开关无需重建 rendition
+      await applyCoverSinglePage(r, () => coverSinglePage.value)
       // pre-paginated 翻页直通：绕开依赖容器滚动位置的 next/prev 判定
       await installPaginatedNavigation(r)
       pushCoverDiag(
-        `mount cover=${settingsStore.settings.coverSinglePage} spread=${spread.value} dir=${direction.value}`
+        `mount cover=${coverSinglePage.value} spread=${spread.value} dir=${direction.value}`
       )
     }
     return r
@@ -186,6 +192,9 @@ export const useEpubReaderStore = defineStore('epubReader', () => {
     rowOrder.value = progress?.rowOrder ?? 'ltr'
     // 图片型书缩放存于 progress.zoom.scale（1 = 100% 适合视口）
     zoom.value = Math.round((progress?.zoom?.scale ?? 1) * 100)
+    // 封面单独成页：单本显式指定优先，否则跟随全局设置
+    coverSingleOverride.value = progress?.coverSinglePage ?? null
+    coverSinglePage.value = coverSingleOverride.value ?? settingsStore.settings.coverSinglePage
 
     const b = await loadEpubBook(result.fileUrl)
     book = b
@@ -198,7 +207,7 @@ export const useEpubReaderStore = defineStore('epubReader', () => {
     rendition = await mountEngine(element)
     const r = rendition
     // 组表只依赖 spine 元数据与封面设置，在首次 display 前建好供定位对齐使用
-    rebuildPreSpreads(settingsStore.settings.coverSinglePage)
+    rebuildPreSpreads(coverSinglePage.value)
 
     if (isVerticalImageLayout()) {
       // 图片型 + ttb：无 rendition，按 page / 百分比还原 spine 索引并对齐组首，
@@ -241,7 +250,7 @@ export const useEpubReaderStore = defineStore('epubReader', () => {
     ready.value = true
     pushCoverDiag(
       `[open] id=${numId} layout=${detectedLayout} spread=${spreadValue} dir=${directionValue} ` +
-        `cover=${settingsStore.settings.coverSinglePage} pct=${progress?.percentage ?? 'none'} ` +
+        `cover=${coverSinglePage.value} pct=${progress?.percentage ?? 'none'} ` +
         `cfi=${progress?.cfi ? 'yes' : 'no'}`
     )
 
@@ -486,6 +495,33 @@ export const useEpubReaderStore = defineStore('epubReader', () => {
   }
 
   /**
+   * 只对本书生效的「双页封面单独成页」开关（图片型书）。
+   * 组表重建 + 重渲当前组首：epub.js 对已显示的 section 只滚动不重建视图，
+   * 必须先 clear 再 display，否则新旧配对会混在一起。
+   */
+  function setCoverSinglePage(next: boolean) {
+    if (layout.value !== 'pre-paginated') return
+    if (next === coverSinglePage.value) return
+    coverSingleOverride.value = next
+    coverSinglePage.value = next
+    rebuildPreSpreads(next)
+    if (isVerticalImageLayout()) {
+      // 图片型纵向：行表随分组重算，无引擎可重建；末行首页也随分组变化
+      atEnd.value = (current.value?.index ?? 0) >= lastRowFirstPage()
+      scheduleSave()
+      return
+    }
+    const r = rendition
+    if (!r) return
+    const aligned = alignToSpread(current.value?.index ?? 0)
+    const target = book?.spine.get(aligned)?.href
+    r.clear()
+    if (target) void r.display(target).catch((e) => console.error('[epub] 切换封面成页失败', e))
+    else void r.display().catch((e) => console.error('[epub] 切换封面成页失败', e))
+    scheduleSave()
+  }
+
+  /**
    * 切换阅读方向。ltr ↔ rtl 只改引擎方向（不重建）；
    * 跨 ttb 边界必须重建引擎：连续流与分页流的 flow/manager 不同。
    */
@@ -605,6 +641,8 @@ export const useEpubReaderStore = defineStore('epubReader', () => {
       direction: direction.value,
       rowOrder: rowOrder.value,
       zoom: { mode: zoom.value === 100 ? 'fitHeight' : 'custom', scale: zoom.value / 100 },
+      // null = 未在阅读页显式指定，继续跟随全局设置
+      coverSinglePage: coverSingleOverride.value,
       updatedAt: Date.now(),
     })
   }
@@ -625,6 +663,8 @@ export const useEpubReaderStore = defineStore('epubReader', () => {
     locationsReady.value = false
     totalPages.value = 0
     zoom.value = 100
+    coverSingleOverride.value = null
+    coverSinglePage.value = true
   }
 
   return {
@@ -639,6 +679,7 @@ export const useEpubReaderStore = defineStore('epubReader', () => {
     atEnd,
     fontSize,
     zoom,
+    coverSinglePage,
     verticalRows,
     open,
     getRendition,
@@ -653,6 +694,7 @@ export const useEpubReaderStore = defineStore('epubReader', () => {
     turnTarget,
     turnTo,
     toggleSpread,
+    setCoverSinglePage,
     setDirection,
     setVerticalPosition,
     setFontSize,

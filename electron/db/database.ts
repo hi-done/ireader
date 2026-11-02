@@ -119,6 +119,13 @@ const MIGRATIONS: Array<(db: Database.Database) => void> = [
       CREATE INDEX IF NOT EXISTS idx_ai_translations_book_page ON ai_translations(book_id, page);
     `)
   },
+
+  // v7: 单本双页封面设置（NULL = 跟随全局设置；0 = 封面与第 1 页并排，1 = 封面单独成页）
+  (db) => {
+    if (!hasColumn(db, 'reading_progress', 'cover_single_page')) {
+      db.exec('ALTER TABLE reading_progress ADD COLUMN cover_single_page INTEGER;')
+    }
+  },
 ]
 
 /**

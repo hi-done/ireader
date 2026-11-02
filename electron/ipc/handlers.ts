@@ -245,6 +245,15 @@ export function registerIpcHandlers(getWin: () => BrowserWindow | null): void {
   ipcMain.handle(
     'reader:saveProgress',
     wrap(({ bookId, progress }: { bookId: number; progress: ReadingProgress }) => {
+      // 单本封面为三态（true / false / null = 跟随全局），非布尔的脏值写库后无法还原语义
+      const coverSinglePage = progress?.coverSinglePage
+      if (
+        coverSinglePage !== undefined &&
+        coverSinglePage !== null &&
+        typeof coverSinglePage !== 'boolean'
+      ) {
+        throw { code: 'INVALID_PARAMS', message: 'coverSinglePage 取值无效' } as AppError
+      }
       progressRepo.upsert(bookId, progress)
     })
   )

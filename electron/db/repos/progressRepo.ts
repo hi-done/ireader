@@ -16,6 +16,8 @@ export interface ProgressRow {
   percentage: number | null
   /** 纵向双页行内页序；旧版本行为 NULL（视为左→右） */
   row_order: RowOrder | null
+  /** 单本双页封面：NULL = 跟随全局设置；0 = 封面与第 1 页并排；1 = 封面单独成页 */
+  cover_single_page: number | null
 }
 
 /** 方向同步用精简行：只读判定所需字段，避免把整行进度带进内存 */
@@ -36,12 +38,13 @@ export const progressRepo = {
   upsert(bookId: number, progress: ReadingProgress): void {
     getDatabase()
       .prepare(
-        `INSERT INTO reading_progress (book_id, page, mode, direction, zoom_mode, zoom_scale, updated_at, cfi, percentage, row_order)
-         VALUES (@bookId, @page, @mode, @direction, @zoomMode, @zoomScale, @updatedAt, @cfi, @percentage, @rowOrder)
+        `INSERT INTO reading_progress (book_id, page, mode, direction, zoom_mode, zoom_scale, updated_at, cfi, percentage, row_order, cover_single_page)
+         VALUES (@bookId, @page, @mode, @direction, @zoomMode, @zoomScale, @updatedAt, @cfi, @percentage, @rowOrder, @coverSinglePage)
          ON CONFLICT(book_id) DO UPDATE SET
            page = @page, mode = @mode, direction = @direction,
            zoom_mode = @zoomMode, zoom_scale = @zoomScale, updated_at = @updatedAt,
-           cfi = @cfi, percentage = @percentage, row_order = @rowOrder`
+           cfi = @cfi, percentage = @percentage, row_order = @rowOrder,
+           cover_single_page = @coverSinglePage`
       )
       .run({
         bookId,
@@ -54,6 +57,9 @@ export const progressRepo = {
         cfi: progress.cfi ?? null,
         percentage: progress.percentage ?? null,
         rowOrder: progress.rowOrder ?? 'ltr',
+        // NULL 表达「跟随全局」：调用方（如 EPUB 阅读器）不带该字段时不得写入布尔快照
+        coverSinglePage:
+          progress.coverSinglePage == null ? null : progress.coverSinglePage ? 1 : 0,
       })
   },
 
@@ -83,6 +89,7 @@ export function toReadingProgress(row: ProgressRow): ReadingProgress {
     mode: row.mode,
     direction: row.direction,
     rowOrder: row.row_order === 'rtl' ? 'rtl' : 'ltr',
+    coverSinglePage: row.cover_single_page == null ? null : row.cover_single_page === 1,
     zoom: { mode: row.zoom_mode, scale: row.zoom_scale },
     updatedAt: row.updated_at,
   }

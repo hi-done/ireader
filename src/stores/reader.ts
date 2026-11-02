@@ -22,6 +22,8 @@ export const useReaderStore = defineStore('reader', () => {
   /** 纵向双页行内页序：切入 ttb 时取当时的横向方向；默认左→右 */
   const rowOrder = ref<RowOrder>('ltr')
   const coverSinglePage = ref(true)
+  /** 本书的单本封面设置：null = 跟随全局设置；非 null 为用户在阅读页显式指定，随进度落盘 */
+  const coverSingleOverride = ref<boolean | null>(null)
   const zoomMode = ref<ZoomMode>('fitHeight')
   const zoomScale = ref(1)
   const spreads = ref<Spread[]>([])
@@ -66,7 +68,9 @@ export const useReaderStore = defineStore('reader', () => {
     direction.value = progress?.direction ?? settingsStore.settings.defaultDirection
     // 纵向行内页序：仅在进度里保存过（上次就是 ttb）时存在，否则保持默认左→右
     rowOrder.value = progress?.rowOrder ?? 'ltr'
-    coverSinglePage.value = settingsStore.settings.coverSinglePage
+    // 单本封面：进度里有值（用户在本节点过按钮）优先，否则跟随全局设置
+    coverSingleOverride.value = progress?.coverSinglePage ?? null
+    coverSinglePage.value = coverSingleOverride.value ?? settingsStore.settings.coverSinglePage
     zoomMode.value = progress?.zoom.mode ?? 'fitHeight'
     zoomScale.value = progress?.zoom.scale ?? 1
 
@@ -95,6 +99,19 @@ export const useReaderStore = defineStore('reader', () => {
   function setZoom(nextMode: ZoomMode, scale = 1) {
     zoomMode.value = nextMode
     zoomScale.value = scale
+    scheduleSave()
+  }
+
+  /**
+   * 单本「双页封面单独成页」：写入本书覆盖值并立即重建页组。
+   * 页码按当前页重新定位（与 setMode 同口径），避免组边界变化导致跳页。
+   * @param next true = 封面单独成页；false = 封面与第 1 页并排
+   */
+  function setCoverSinglePage(next: boolean) {
+    const page = spreads.value[currentIndex.value]?.firstPage ?? 1
+    coverSingleOverride.value = next
+    coverSinglePage.value = next
+    rebuildSpreads(page)
     scheduleSave()
   }
 
@@ -130,6 +147,8 @@ export const useReaderStore = defineStore('reader', () => {
       mode: mode.value,
       direction: direction.value,
       rowOrder: rowOrder.value,
+      // null = 跟随全局：未点过按钮的书不固化全局值，设置页改全局后它仍跟随
+      coverSinglePage: coverSingleOverride.value,
       zoom: { mode: zoomMode.value, scale: zoomScale.value },
       updatedAt: Date.now(),
     })
@@ -153,6 +172,7 @@ export const useReaderStore = defineStore('reader', () => {
     direction,
     rowOrder,
     coverSinglePage,
+    coverSingleOverride,
     zoomMode,
     zoomScale,
     spreads,
@@ -162,6 +182,7 @@ export const useReaderStore = defineStore('reader', () => {
     setMode,
     setDirection,
     setZoom,
+    setCoverSinglePage,
     goTo,
     next,
     prev,

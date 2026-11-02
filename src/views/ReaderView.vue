@@ -33,6 +33,14 @@
         <button @click="reader.setMode(reader.mode === 'single' ? 'double' : 'single')">
           {{ reader.mode === 'single' ? t('reader.single') : t('reader.double') }}
         </button>
+        <!-- 单本封面单独成页：单页模式该值无视觉效果，故仅双页渲染；文字即当前生效态 -->
+        <button
+          v-if="reader.mode === 'double'"
+          class="cover-single"
+          @click="reader.setCoverSinglePage(!reader.coverSinglePage)"
+        >
+          {{ reader.coverSinglePage ? t('reader.coverSolo') : t('reader.coverPair') }}
+        </button>
         <SelectMenu
           class="direction-select"
           :model-value="reader.direction"
@@ -1891,6 +1899,11 @@ function onKeydown(e: KeyboardEvent) {
   cursor: pointer;
   padding: 4px 8px;
   border-radius: 4px;
+}
+
+/* 单本封面按钮：文案随语言变长（英文 / 日文），禁换行避免顶栏被撑高 */
+.controls .cover-single {
+  white-space: nowrap;
 }
 
 .zoom-select,

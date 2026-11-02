@@ -439,18 +439,24 @@ type EpubManagerLike = {
   prev?: () => unknown
 }
 
+/** 已装过封面策略补丁的 manager：补丁只能包一次，否则 prev 会被层层套娃 */
+const coverPatched = new WeakSet<object>()
+
 /**
- * 应用「双页模式封面单独成页」设置（仅 pre-paginated 图片型书）。
+ * 安装「双页模式封面单独成页」策略（仅 pre-paginated 图片型书）。
  * epub.js 对 pre-paginated 硬编码「spine 第 0 项（封面）单独显示」；关闭该设置时
  * 封面与第 1 页按普通跨页并排，需 patch 两条路径：
  * - handleNextPrePaginated：display/下一页时不再对 index===0 特判
  * - prev：上一页到封面时不再 forceRight 单页，改为 append [封面, 第1页] 并排
+ *
+ * 补丁常驻、每次调用时通过 getCoverSingle() 读当前生效值：开启时原样委托给
+ * 原生实现（与原行为等价），关闭时走映射逻辑。这样阅读页切换「封面单页/并排」
+ * 只需改值 + 重渲当前屏，不必销毁重建 rendition。
  */
 export async function applyCoverSinglePage(
   rendition: EpubRendition,
-  coverSinglePage: boolean
+  getCoverSingle: () => boolean
 ): Promise<void> {
-  if (coverSinglePage) return
   // rendition.manager 由 start() 创建，而 start() 排在渲染队列（requestAnimationFrame）
   // 中异步执行：renderTo 返回时 manager 尚未创建，直接同步取会得到 undefined，
   // 导致 patch 静默未安装。先等 started 完成再 patch。
@@ -464,15 +470,28 @@ export async function applyCoverSinglePage(
   const layout = manager.layout
   // 不能在此检查 divisor：open 阶段 layout.calculate 尚未执行，divisor 还是构造默认值 1，
   // 检查会误判导致 patch 永不生效。divisor 的判断放在 patch 函数体内（调用时已计算）。
-  pushCoverDiag(`[cover] setting=${coverSinglePage} layout=${layout?.name} divisor=${layout?.divisor}`)
+  pushCoverDiag(
+    `[cover] install cover=${getCoverSingle()} layout=${layout?.name} divisor=${layout?.divisor}`
+  )
   if (layout?.name !== 'pre-paginated') return
+  if (coverPatched.has(manager)) return
+  coverPatched.add(manager)
 
-  if (typeof manager.handleNextPrePaginated === 'function') {
-    manager.handleNextPrePaginated = (_forceRight, section, action) => {
+  const origNextPrePaginated =
+    typeof manager.handleNextPrePaginated === 'function'
+      ? manager.handleNextPrePaginated.bind(manager)
+      : null
+  if (origNextPrePaginated) {
+    manager.handleNextPrePaginated = (forceRight, section, action) => {
       const l = manager.layout
       pushCoverDiag(
-        `[cover] next enter idx=${section?.index} name=${l?.name} divisor=${l?.divisor}`
+        `[cover] next enter idx=${section?.index} name=${l?.name} divisor=${l?.divisor} ` +
+          `cover=${getCoverSingle()}`
       )
+      if (getCoverSingle()) {
+        // 封面单独成页：交回原生（index===0 特判、page-spread-left 判定都不变）
+        return origNextPrePaginated(forceRight, section, action)
+      }
       if (!(l?.name === 'pre-paginated' && l.divisor! > 1)) return
       // 用户关闭「封面单独成页」：无条件与下一页并排——无视 forceRight 与
       // page-spread-left（很多固定布局书第 1 页 itemref 带 page-spread-left，
@@ -489,6 +508,7 @@ export async function applyCoverSinglePage(
   if (typeof manager.prev === 'function') {
     const origPrev = manager.prev.bind(manager)
     manager.prev = () => {
+      if (getCoverSingle()) return origPrev()
       const l = manager.layout
       const first = manager.views?.first()
       const section = first?.section

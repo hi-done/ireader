@@ -29,6 +29,8 @@ export interface ReadingProgress {
   direction: Direction
   /** 纵向双页行内页序；缺省左→右（仅 ttb 生效，横向方向忽略） */
   rowOrder?: RowOrder
+  /** 本书是否单独指定「双页封面单独成页」；null / 缺省 = 跟随全局设置（仅双页模式生效） */
+  coverSinglePage?: boolean | null
   zoom: { mode: ZoomMode; scale: number }
   updatedAt: number
 }
