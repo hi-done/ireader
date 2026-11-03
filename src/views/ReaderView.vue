@@ -455,9 +455,9 @@ function onAiMenuAction(action: AiMenuAction): void {
 /**
  * 译文覆盖层门控（单点）：渲染中与卷曲动画中一律不显示，之后当前页还要再停留
  * AI_OVERLAY_SETTLE_MS 才恢复显示——连翻时每轮渲染/动画都会重置计时，
- * 只有真正停手 300ms 才让译文框出现，避免框随动画在页面上闪现抖动。
+ * 只有真正停手 20ms 才让译文框出现，避免框随动画在页面上闪现抖动。
  */
-const AI_OVERLAY_SETTLE_MS = 300
+const AI_OVERLAY_SETTLE_MS = 20
 /** 门控持有数：渲染与动画可能交错，计数归零才开始停留计时 */
 let aiOverlayHolds = 0
 /** 停留计时器：非空 = 仍在等当前页「稳住」 */
@@ -494,7 +494,7 @@ function holdAiOverlay(): void {
   syncAiOverlayFading()
 }
 
-/** 退出门控：计数归零后重新开始 300ms 停留计时 */
+/** 退出门控：计数归零后重新开始 100ms 停留计时 */
 function releaseAiOverlay(): void {
   aiOverlayHolds = Math.max(0, aiOverlayHolds - 1)
   startAiOverlaySettle()
@@ -508,7 +508,7 @@ function resetAiOverlayGate(): void {
   syncAiOverlayFading()
 }
 
-/** 播卷曲并把译文覆盖层一并门控：动画落定后才允许进入 300ms 停留计时 */
+/** 播卷曲并把译文覆盖层一并门控：动画落定后才允许进入 100ms 停留计时 */
 function playTurnCurlHoldingAi(options: Parameters<typeof playTurnCurl>[0]): void {
   holdAiOverlay()
   const curl = playTurnCurl(options)
@@ -818,7 +818,7 @@ function renderSliderFrame(): void {
  * 翻页入口：门控必须【同步】进入。本函数由 currentDisplayPages 的 pre-watch 调用，
  * 早于新页 DOM 更新——若等到渲染完再淡出，新页的框会先完整画一帧再消失（闪烁）。
  * 整轮过程持有门控，卷曲动画由 playTurnCurlHoldingAi 另行加持有，
- * 因此计数归零 = 「渲染落定且动画结束」，此时才开始 300ms 停留计时。
+ * 因此计数归零 = 「渲染落定且动画结束」，此时才开始 100ms 停留计时。
  */
 async function runTurnPass(): Promise<void> {
   if (isVertical.value || !bookReady) return
