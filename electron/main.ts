@@ -7,6 +7,7 @@ import { registerProtocolHandler, registerProtocolScheme } from './services/prot
 import { registerIpcHandlers } from './ipc/handlers'
 import { initLogger, attachProcessErrorHandlers, info, error } from './services/logger'
 import { initUpdaterService } from './services/updaterService'
+import type { WindowFullscreenState } from '../shared/types'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
@@ -56,6 +57,15 @@ function createWindow() {
 
   // 页面的 <title> 更新会覆盖窗口标题，阻止它以保证标题始终为「IReader v版本号」
   win.on('page-title-updated', (e) => e.preventDefault())
+
+  // 全屏状态唯一来源：窗口原生全屏变化（应用主动切换 / macOS 红绿灯 / 系统级）一律回传渲染层
+  const relayFullscreen = (fullscreen: boolean): void => {
+    const payload: WindowFullscreenState = { fullscreen }
+    info(`[window] relay fullscreen=${fullscreen}`)
+    if (win && !win.webContents.isDestroyed()) win.webContents.send('window:fullscreenChanged', payload)
+  }
+  win.on('enter-full-screen', () => relayFullscreen(true))
+  win.on('leave-full-screen', () => relayFullscreen(false))
 
   if (VITE_DEV_SERVER_URL) {
     win.loadURL(VITE_DEV_SERVER_URL)

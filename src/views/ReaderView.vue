@@ -64,30 +64,21 @@
           @trigger-leave="closeTip"
         />
         <!-- AI 框选翻译：按钮 + 动作下拉（全部隐藏 / 全部折叠 / 全部展开） -->
-        <div class="ai-menu">
-          <button
-            class="ai-toggle"
-            :class="{ active: ai.selecting, off: !aiReady }"
-            :aria-disabled="!aiReady"
-            :aria-pressed="ai.selecting"
-            @click="onAiButton"
-            @pointerenter="openAiTip"
-            @pointerleave="closeTip"
-            @focus="openAiTip"
-            @blur="closeTip"
-          >
-            {{ t('ai.readerButton') }}
-          </button>
-          <button
-            ref="aiCaretEl"
-            class="ai-caret"
-            :disabled="!aiReady"
-            :aria-label="t('ai.readerHint')"
-            aria-haspopup="menu"
-            :aria-expanded="aiMenuOpen"
-            @click="toggleAiMenu"
-          >▾</button>
-        </div>
+        <AiReaderMenu
+          ref="aiMenuRef"
+          :ready="aiReady"
+          :active="ai.selecting"
+          :has-records="hasAiRecords"
+          :hidden-all="ai.hiddenAll"
+          @toggle="onAiButton"
+          @hide-all="onAiHideAll"
+          @collapse-all="onAiCollapseAll"
+          @expand-all="onAiExpandAll"
+          @open="onAiMenuOpen"
+          @close="onAiMenuClose"
+          @trigger-enter="openAiTip"
+          @trigger-leave="closeTip"
+        />
         <button
           :aria-label="t('reader.fullscreen')"
           @click="toggleFullscreen"
@@ -113,6 +104,10 @@
         :initial-page="initialVerticalPage"
         :sizing="verticalSizing"
         :source="verticalSource"
+        :ai-book-title="aiBookTitle"
+        :ai-selectable="ai.selecting"
+        :ai-visible="!aiOverlayHidden"
+        :ai-page-offset="0"
         @page-change="onVerticalPageChange"
         @turn="verticalStep"
       />
@@ -170,27 +165,6 @@
     <!-- 选词 / 未启用提示：底部上方居中胶囊，自动淡出 -->
     <div v-if="aiNotice" class="ai-notice">{{ aiNotice }}</div>
 
-    <!-- AI 动作下拉：Teleport 到 body，顶栏毛玻璃的固定包含块不会让菜单错位 -->
-    <Teleport to="body">
-      <div v-if="aiMenuOpen" class="ai-menu-pop" role="menu" :style="aiMenuStyle">
-        <button
-          role="menuitem"
-          :disabled="!hasAiRecords || ai.hiddenAll"
-          @click="onAiMenuAction('hideAll')"
-        >{{ t('ai.menu.hideAll') }}</button>
-        <button
-          role="menuitem"
-          :disabled="!hasAiRecords"
-          @click="onAiMenuAction('collapseAll')"
-        >{{ t('ai.menu.collapseAll') }}</button>
-        <button
-          role="menuitem"
-          :disabled="!hasAiRecords"
-          @click="onAiMenuAction('expandAll')"
-        >{{ t('ai.menu.expandAll') }}</button>
-      </div>
-    </Teleport>
-
     <!-- 提示浮层：Teleport 到 body，顶栏毛玻璃的固定包含块不影响坐标；同一视图只挂一个实例 -->
     <CardTip
       :visible="tipAnchor !== null"
@@ -210,7 +184,6 @@ import type { Direction, ZoomMode } from '../../shared/types'
 import { useReaderStore } from '../stores/reader'
 import { useLibraryStore } from '../stores/library'
 import { useSettingsStore } from '../stores/settings'
-import { ipc } from '../services/ipc'
 import { findSpreadIndexByPage } from '../services/spread'
 import { getFromCache, putToCache, clearCache } from '../services/pageCache'
 import type { SelectOption } from '../services/selectMenu'
@@ -243,10 +216,19 @@ import {
 } from '../services/wheelScroll'
 import EpubReaderView from './EpubReaderView.vue'
 import AiTranslationLayer from '../components/reader/AiTranslationLayer.vue'
+import AiReaderMenu from '../components/reader/AiReaderMenu.vue'
+import { useAiNotice } from '../components/reader/useAiNotice'
 import { appLocale, t } from '../i18n'
 import { localizeError } from '../i18n/errors'
 import { compareTitles } from '../services/libraryList'
 import { useAiTranslationStore } from '../stores/aiTranslation'
+import {
+  exitFullscreen,
+  exitedFullscreenRecently,
+  isFullscreen,
+  toggleFullscreen,
+} from '../services/fullscreen'
+import { resolveReaderEsc } from '../services/readerEsc'
 
 const route = useRoute()
 const router = useRouter()
@@ -292,6 +274,8 @@ const barsVisible = ref(false)
 let hideTimer: ReturnType<typeof setTimeout> | null = null
 /** 顶栏下拉展开期间锁定可见：鼠标在触发器上移动会反复触发 showBarsTemporarily，只清一次计时器不够 */
 let barsPinned = false
+/** AI 选词期间抑制工具栏：框选需要完整画面，这段时间任何唤出请求都丢弃 */
+let barsSuppressedByAi = false
 
 // —— 顶栏悬停提示：复用书卡的 CardTip 浮层，浮层 Teleport 到 body 不受顶栏毛玻璃包含块影响 ——
 const { tipAnchor, tipText, tipPlacement, tipAlign, openTip, openTipAt, closeTip } = useHoverTip()
@@ -310,9 +294,9 @@ function openDirectionTip(anchor: HTMLElement) {
   openTipAt(anchor, t('reader.direction'))
 }
 
-/** AI 按钮提示：带快捷键说明（不随顶栏按钮文字长度变化） */
-function openAiTip(event: PointerEvent | FocusEvent) {
-  openTip(event, t('ai.readerHint'))
+/** AI 按钮提示：锚点由 AiReaderMenu 透出（不随顶栏按钮文字长度变化） */
+function openAiTip(anchor: HTMLElement) {
+  openTipAt(anchor, t('ai.readerHint'))
 }
 
 // 顶栏淡出后按钮已不可见：提示框同步收起，不悬浮在空处
@@ -331,44 +315,31 @@ const aiReady = computed(() => {
 })
 const hasAiRecords = computed(() => ai.records.length > 0)
 
+/** 下拉组件句柄：进选词前需要强制收起已展开的菜单 */
+const aiMenuRef = ref<InstanceType<typeof AiReaderMenu> | null>(null)
+
 /** 底部提示胶囊：选词提示与「未启用」提示共用，自动淡出 */
-const aiNotice = ref('')
-let aiNoticeTimer: ReturnType<typeof setTimeout> | null = null
+const { text: aiNotice, show: showAiNotice, clear: clearAiNotice } = useAiNotice()
 
-function showAiNotice(message: string, ms = 3000): void {
-  aiNotice.value = message
-  if (aiNoticeTimer) clearTimeout(aiNoticeTimer)
-  aiNoticeTimer = setTimeout(() => {
-    aiNoticeTimer = null
-    aiNotice.value = ''
-  }, ms)
-}
-
-function clearAiNotice(): void {
-  if (aiNoticeTimer) clearTimeout(aiNoticeTimer)
-  aiNoticeTimer = null
-  aiNotice.value = ''
-}
-
-// 退出选词（再次点按钮 / Esc / 框选完成）统一收起提示并解锁工具栏
+// 退出选词（再次点按钮 / Esc / 框选完成）统一收起提示并解除工具栏抑制（保持隐藏）
 watch(
   () => ai.selecting,
   (on) => {
     if (!on) {
       clearAiNotice()
-      unpinBars()
+      exitAiSelectUi()
     }
   }
 )
 
-/** 进入 / 退出选词：选词期间锁定顶栏，避免鼠标移动把工具栏自动隐藏 */
+/** 进入 / 退出选词：进入即隐藏工具栏（选词期间不可唤出），退出后保持隐藏 */
 function toggleAiSelect(): void {
   if (ai.selecting) {
     ai.endSelect()
     return
   }
   ai.beginSelect()
-  pinBars()
+  enterAiSelectUi()
   showAiNotice(t('ai.selectHint'))
 }
 
@@ -381,75 +352,27 @@ function onAiButton(): void {
   toggleAiSelect()
 }
 
-// —— 动作下拉：Teleport 到 body 后按触发按钮矩形定位（顶栏毛玻璃会改变 fixed 包含块） ——
-const aiCaretEl = ref<HTMLElement | null>(null)
-const aiMenuOpen = ref(false)
-const aiMenuPos = ref({ top: 0, right: 0 })
-
-const aiMenuStyle = computed<Record<string, string>>(() => ({
-  top: `${aiMenuPos.value.top}px`,
-  right: `${aiMenuPos.value.right}px`,
-}))
-
-function toggleAiMenu(): void {
-  if (aiMenuOpen.value) {
-    closeAiMenu()
-    showBarsTemporarily()
-    return
-  }
-  const rect = aiCaretEl.value?.getBoundingClientRect()
-  if (!rect) return
-  aiMenuPos.value = {
-    top: rect.bottom + 6,
-    right: Math.max(window.innerWidth - rect.right, 8),
-  }
-  aiMenuOpen.value = true
+// —— 动作下拉：弹层与关闭路径由 AiReaderMenu 自管，视图只接动作与顶栏 pin ——
+/** 展开期间顶栏常显：鼠标在触发器上移动会反复触发 showBarsTemporarily，只清计时器不够 */
+function onAiMenuOpen(): void {
   pinBars()
-  document.addEventListener('pointerdown', onDocPointerDown, true)
-  document.addEventListener('keydown', onMenuKeydown, true)
 }
 
-function closeAiMenu(): void {
-  if (!aiMenuOpen.value) return
-  aiMenuOpen.value = false
-  document.removeEventListener('pointerdown', onDocPointerDown, true)
-  document.removeEventListener('keydown', onMenuKeydown, true)
-}
-
-/** 点菜单外任意处收起菜单，并恢复顶栏自动隐藏计时 */
-function onDocPointerDown(e: PointerEvent): void {
-  const target = e.target as Node | null
-  const pop = document.querySelector('.ai-menu-pop')
-  if (target === aiCaretEl.value || (target && pop?.contains(target))) return
-  closeAiMenu()
+/** 所有关闭路径（选动作 / 点外部 / Esc）都汇到这里，解除 pin 并恢复自动隐藏 */
+function onAiMenuClose(): void {
   unpinBars()
 }
 
-/** 菜单内的 Esc 优先收起菜单：阻止捕获后的 window keydown 退出阅读页 */
-function onMenuKeydown(e: KeyboardEvent): void {
-  if (e.key !== 'Escape') return
-  e.preventDefault()
-  e.stopPropagation()
-  closeAiMenu()
-  unpinBars()
+function onAiHideAll(): void {
+  ai.hideAll()
 }
 
-type AiMenuAction = 'hideAll' | 'collapseAll' | 'expandAll'
+function onAiCollapseAll(): void {
+  void ai.collapseAll()
+}
 
-function onAiMenuAction(action: AiMenuAction): void {
-  closeAiMenu()
-  unpinBars()
-  switch (action) {
-    case 'hideAll':
-      ai.hideAll()
-      break
-    case 'collapseAll':
-      void ai.collapseAll()
-      break
-    case 'expandAll':
-      void ai.expandAll()
-      break
-  }
+function onAiExpandAll(): void {
+  void ai.expandAll()
 }
 
 /**
@@ -566,6 +489,9 @@ const bookTitle = computed(
   () => library.books.find((b) => b.id === reader.bookId)?.title ?? ''
 )
 
+/** 纵向覆盖层书名：AI 未启用时传空（不挂覆盖层），避免每页白挂一个组件 */
+const aiBookTitle = computed(() => (aiReady.value ? bookTitle.value : ''))
+
 const currentDisplayPages = computed(
   () => reader.spreads[reader.currentIndex]?.displayOrder ?? []
 )
@@ -611,6 +537,8 @@ const verticalSource = computed<VerticalPageSource | null>(() =>
 function onVerticalPageChange(page: number): void {
   const index = findSpreadIndexByPage(reader.spreads, page)
   if (index !== reader.currentIndex) reader.goTo(index)
+  // 纵向屏内可同时有多页：按「已挂载行包含的页」裁剪临时框，不能只看顶行首页
+  ai.prunePending(verticalRef.value?.visibleAiPages() ?? [page])
 }
 
 /** 纵向翻一「页」= 滚到上/下一行顶部（无动画）；越界由组件夹取 */
@@ -670,7 +598,8 @@ watch(isEpub, (now) => {
     reader.close()
     clearCache()
     loadError.value = ''
-    ai.reset(null) // 切到 EPUB：PDF 覆盖层与在途请求一起作废
+    // 不动共享的 AI 记录：冷启动直接进 EPUB 时本 watch 会因「文库加载后格式变为 epub」触发，
+    // 此时 EpubReaderView 可能已 ai.load(id)，在这里 reset 会把刚载入的译文清空
   }
 })
 
@@ -740,7 +669,6 @@ onBeforeUnmount(() => {
   clearCache()
   stopTracking() // 结算并停止阅读计时
   clearAiNotice()
-  closeAiMenu()
   ai.reset(null) // 作废在途翻译：离开阅读页后返回的结果不再渲染
   reader.close()
 })
@@ -782,20 +710,25 @@ function switchBook(delta: 1 | -1) {
 // 监听显示页序列而非 currentIndex：模式/方向切换可能保持索引不变，但 displayOrder 已变；
 // 是否翻页以 store 的 navCount 判定（仅 goTo 递增），避免把页组重排误判为翻页
 watch(currentDisplayPages, (pages) => {
-  // 离开当前显示页的临时框（兜底 / 错误 / 在途）一律丢弃：翻页后不应再出现
-  ai.prunePending(pages)
+  // 离开当前显示页的临时框（兜底 / 错误 / 在途）一律丢弃：翻页后不应再出现。
+  // 纵向屏内可同时有多页，裁剪口径改由 onVerticalPageChange 按可见行集合处理
+  if (!isVertical.value) ai.prunePending(pages)
   void runTurnPass()
 })
 
 // 切到上→下：揭除在播卷曲、清连翻会话、作废预取（纵向不参与动画管线）
 watch(isVertical, (vertical) => {
-  if (!vertical) return
-  clearBurstSession()
-  cancelTurnCurl()
-  cancelPrefetch()
-  policy.reset()
-  // 纵向不支持框选翻译：退出选词态，否则滚轮与拖拽会被一直屏蔽
-  ai.endSelect()
+  if (vertical) {
+    // 纵向同样支持框选翻译，选词态与工具栏抑制照旧保留，只需清动画管线
+    clearBurstSession()
+    cancelTurnCurl()
+    cancelPrefetch()
+    policy.reset()
+    unpinBars()
+    return
+  }
+  // 回到横向：纵向屏内的其它页不再可见，临时框只保留当前显示页
+  ai.prunePending(currentDisplayPages.value)
   unpinBars()
 })
 
@@ -1271,11 +1204,27 @@ function goBack() {
   }
 }
 
-async function toggleFullscreen() {
-  const next = !document.fullscreenElement
-  if (next) await document.documentElement.requestFullscreen()
-  else await document.exitFullscreen()
-  ipc.window.setFullscreen(next)
+/**
+ * Esc 唯一优先级（选词 > 全屏 > 返回文库）：横向与纵向共用同一判定，
+ * 选词态只退选词——绝不连带退全屏或跳回文库。
+ */
+function onReaderEscape(): void {
+  switch (
+    resolveReaderEsc({
+      selecting: ai.selecting,
+      fullscreen: isFullscreen.value,
+      justExitedFullscreen: exitedFullscreenRecently(),
+    })
+  ) {
+    case 'exitAiSelect':
+      ai.endSelect() // 工具栏抑制由 watch(ai.selecting) 统一收尾
+      return
+    case 'exitFullscreen':
+      void exitFullscreen()
+      return
+    case 'backToLibrary':
+      goBack()
+  }
 }
 
 function onHotzoneClick(side: 'left' | 'right') {
@@ -1469,12 +1418,41 @@ function onZoomSelect(mode: ZoomMode) {
 }
 
 function showBarsTemporarily(ms = 3000) {
+  // AI 选词期间唯一门控：鼠标移边 / 菜单回调的唤出请求在这里统一失效
+  if (barsSuppressedByAi) return
   barsVisible.value = true
   if (hideTimer) clearTimeout(hideTimer)
   hideTimer = null
   // 下拉展开期间只保持可见、不启动隐藏计时：鼠标在触发器附近移动会反复调用本函数
   if (barsPinned) return
   hideTimer = setTimeout(() => (barsVisible.value = false), ms)
+}
+
+/** 立即隐藏并清掉隐藏计时（选词进/出共用，避免残留计时把工具栏提前收起） */
+function hideBarsNow(): void {
+  if (hideTimer) clearTimeout(hideTimer)
+  hideTimer = null
+  barsVisible.value = false
+}
+
+/** 进入 AI 选词：立即淡出顶/底栏并接管抑制（替代原先的 pinBars 常显） */
+function enterAiSelectUi(): void {
+  aiMenuRef.value?.closeMenu()
+  closeTip()
+  barsPinned = false
+  barsSuppressedByAi = true
+  hideBarsNow()
+  // 选词要拖框：结束拖拽平移（原 pinBars 的职责挪到这里）
+  panning = false
+  panMoved = false
+  document.body.classList.remove('panning')
+}
+
+/** 退出 AI 选词：解除抑制但保持隐藏，鼠标移到上/下边缘时唤出照旧 */
+function exitAiSelectUi(): void {
+  barsSuppressedByAi = false
+  barsPinned = false
+  hideBarsNow()
 }
 
 /** 下拉展开：锁定顶栏 + 结束拖拽平移（弹层在 body 下，菜单内 mouseup 不回阅读区） */
@@ -1548,8 +1526,8 @@ function onMouseUp() {
 
 let resizeTimer: ReturnType<typeof setTimeout> | null = null
 function onResize() {
-  // 纵向由 VerticalScrollView 的 ResizeObserver 自行重排重渲
-  if (isVertical.value) return
+  // 纵向由 VerticalScrollView 的 ResizeObserver 自行重排重渲；EPUB 尺寸由 EpubReaderView 自己处理
+  if (isVertical.value || isEpub.value) return
   if (resizeTimer) clearTimeout(resizeTimer)
   // 防抖：连续拖拽窗口只重渲最后一帧；缓存签名含视口尺寸，旧位图与旧覆盖层自动失效
   resizeTimer = setTimeout(() => {
@@ -1562,9 +1540,30 @@ function onResize() {
   }, 200)
 }
 
+/** 表单控件（底栏滑块等）聚焦时仍需让给控件的按键；其余快捷键照常生效 */
+const FORM_NAV_KEYS = new Set([
+  'ArrowLeft',
+  'ArrowRight',
+  'ArrowUp',
+  'ArrowDown',
+  'Home',
+  'End',
+  'PageUp',
+  'PageDown',
+  ' ',
+  'Enter',
+])
+
 function onKeydown(e: KeyboardEvent) {
+  // EPUB 由 EpubReaderView 自行处理：模板只是按格式二选一渲染子视图，本组件仍处于挂载态，
+  // 两边都监听 window 会让同一次按键被执行两遍——F / A 这类 toggle 快捷键会互相抵消
+  // （进了全屏又退出、启动选词又结束），Esc 也会先退全屏再被第二遍判成「返回文库」
+  if (isEpub.value) return
   const target = e.target as HTMLElement
-  if (target.tagName === 'INPUT' || target.tagName === 'SELECT' || target.tagName === 'TEXTAREA') {
+  // 只让位导航键：拖过滑块后焦点留在 input 上时，A / F 等快捷键仍应生效
+  const inField =
+    target.tagName === 'INPUT' || target.tagName === 'SELECT' || target.tagName === 'TEXTAREA'
+  if (inField && FORM_NAV_KEYS.has(e.key)) {
     return // 滑块等控件聚焦时让方向键留给控件自身
   }
   // 上→下：上下键 / 翻页键滚动一行，绝不进入翻页动画管线
@@ -1603,9 +1602,14 @@ function onKeydown(e: KeyboardEvent) {
       case 'F':
         toggleFullscreen()
         return
+      case 'a':
+      case 'A':
+        // 纵向同样进出选词：选词期间滚轮保留原生滚动（onWheel 早退不 preventDefault）
+        if (!aiReady.value) showAiNotice(t('ai.disabledTip'))
+        else toggleAiSelect()
+        return
       case 'Escape':
-        if (document.fullscreenElement) document.exitFullscreen()
-        else goBack()
+        onReaderEscape()
         return
       case '=':
       case '+':
@@ -1687,12 +1691,7 @@ function onKeydown(e: KeyboardEvent) {
       else toggleAiSelect()
       break
     case 'Escape':
-      // 选词态优先退出选词，再才是退全屏 / 返回文库
-      if (ai.selecting) {
-        ai.endSelect()
-        unpinBars()
-      } else if (document.fullscreenElement) document.exitFullscreen()
-      else goBack()
+      onReaderEscape()
       break
   }
 }
@@ -1742,6 +1741,12 @@ function onKeydown(e: KeyboardEvent) {
   opacity: 1;
 }
 
+/* 淡出态不拦截指针：选词期工具栏隐藏后从顶部起手拖框不应命中不可见按钮 */
+.top-bar:not(.visible),
+.bottom-bar:not(.visible) {
+  pointer-events: none;
+}
+
 .book-nav {
   font-size: 12px;
   padding: 4px 10px;
@@ -1768,48 +1773,7 @@ function onKeydown(e: KeyboardEvent) {
   align-items: center;
 }
 
-/* —— AI 框选翻译：主按钮 + 动作下拉（同一组描边拼在一起） —— */
-.ai-menu {
-  display: flex;
-  align-items: center;
-}
-
-/* 选择器带 .ai-menu 前缀：需越过 .controls button 的描边 / 圆角声明 */
-.ai-menu .ai-toggle {
-  border-top-right-radius: 0;
-  border-bottom-right-radius: 0;
-  border-right: none;
-  white-space: nowrap;
-}
-
-/* 选词态：按下态（底色浅填充 + 描边不透明） */
-.ai-menu .ai-toggle.active {
-  background: rgba(255, 255, 255, 0.18);
-  border-color: rgba(255, 255, 255, 0.85);
-}
-
-/* 未启用：视觉禁用但仍可点击，点击才给「去配置」提示 */
-.ai-menu .ai-toggle.off {
-  opacity: 0.35;
-  cursor: default;
-}
-
-.ai-menu .ai-caret {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  /* 拉伸到主按钮高度：两段拼成一个按钮组 */
-  align-self: stretch;
-  border-top-left-radius: 0;
-  border-bottom-left-radius: 0;
-  padding: 0 6px;
-  line-height: 1;
-}
-
-.ai-menu .ai-caret:disabled {
-  opacity: 0.35;
-  cursor: default;
-}
+/* —— AI 框选翻译：入口按钮组的样式随组件（AiReaderMenu）自带 —— */
 
 /* 底部提示胶囊：选词提示 / 未启用提示 */
 .ai-notice {
@@ -1838,40 +1802,6 @@ function onKeydown(e: KeyboardEvent) {
     opacity: 1;
     transform: translate(-50%, 0);
   }
-}
-
-/* 动作下拉：Teleport 到 body，fixed 定位不受顶栏毛玻璃包含块影响 */
-.ai-menu-pop {
-  position: fixed;
-  z-index: 30;
-  display: flex;
-  flex-direction: column;
-  min-width: 132px;
-  padding: 4px;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: var(--surface);
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.28);
-}
-
-.ai-menu-pop button {
-  padding: 7px 10px;
-  border: none;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--text);
-  font-size: 13px;
-  text-align: left;
-}
-
-.ai-menu-pop button:hover:not(:disabled) {
-  background: var(--brand-soft);
-  color: var(--brand);
-}
-
-.ai-menu-pop button:disabled {
-  opacity: 0.4;
-  cursor: default;
 }
 
 /* 翻页 / 重排 / 停留计时期间隐藏译文覆盖层（作用于子组件根节点）：橡皮筋等残留元素一并隐身 */

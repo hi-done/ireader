@@ -306,6 +306,7 @@ export const ja = {
   'ai.readerHint': 'AI 範囲選択翻訳（A）',
   'ai.selectHint': '翻訳したい範囲をドラッグで選択（Esc でキャンセル）',
   'ai.disabledTip': 'AI 翻訳が無効です。先に設定で有効にしてください',
+  'ai.textUnsupported': 'この書籍はリフロー型テキストのため、AI 範囲翻訳は使用できません',
   'ai.noText': '文字を認識できませんでした',
   'ai.translating': '翻訳中…',
   'ai.box.collapse': '翻訳を折りたたむ',

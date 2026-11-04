@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   buildMetrics,
+  collectVisiblePages,
   computePageBox,
   DEFAULT_PAGE_RATIO,
   estimateRatio,
@@ -212,5 +213,28 @@ describe('findRowByPage - 初始行定位', () => {
 
   it('空行表返回 -1', () => {
     expect(findRowByPage([], 1)).toBe(-1)
+  })
+})
+
+describe('collectVisiblePages - 窗口内页收集', () => {
+  const rows: VerticalRow[] = [
+    { firstPage: 1, pages: [1] },
+    { firstPage: 2, pages: [2, 3] },
+    { firstPage: 4, pages: [4, 5] },
+  ]
+
+  it('按行序、行内左→右展开', () => {
+    expect(collectVisiblePages(rows, [0, 1])).toEqual([1, 2, 3])
+    expect(collectVisiblePages(rows, [1, 2])).toEqual([2, 3, 4, 5])
+  })
+
+  it('单行即单页（封面行）', () => {
+    expect(collectVisiblePages(rows, [0])).toEqual([1])
+  })
+
+  it('越界下标与空窗口返回空数组', () => {
+    expect(collectVisiblePages(rows, [])).toEqual([])
+    expect(collectVisiblePages(rows, [3])).toEqual([])
+    expect(collectVisiblePages([], [0])).toEqual([])
   })
 })

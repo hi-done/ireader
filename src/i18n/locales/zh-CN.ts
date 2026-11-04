@@ -302,6 +302,7 @@ export const zhCN = {
   'ai.readerHint': 'AI 框选翻译（A）',
   'ai.selectHint': '拖拽框选要翻译的文字，Esc 取消',
   'ai.disabledTip': 'AI 翻译未启用，请先在设置中配置',
+  'ai.textUnsupported': '当前书籍为文字排版，暂不支持 AI 框选翻译',
   'ai.noText': '未识别到文字内容',
   'ai.translating': '翻译中…',
   'ai.box.collapse': '折叠译文',

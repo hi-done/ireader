@@ -176,6 +176,12 @@ export interface CaptureRegionRect {
   height: number
 }
 
+/** 窗口全屏状态（window:fullscreenChanged 事件载荷） */
+export interface WindowFullscreenState {
+  /** 窗口当前是否处于全屏（Electron 原生窗口全屏，非 HTML Fullscreen） */
+  fullscreen: boolean
+}
+
 export type LibraryChangedPayload =
   | { type: 'added'; bookIds: number[] }
   | { type: 'coverReady'; bookIds: number[] }

@@ -208,3 +208,23 @@ export function findRowByPage(rows: readonly VerticalRow[], page: number): numbe
   }
   return best
 }
+
+/**
+ * 渲染窗口内实际挂载的页 id（按行序、行内左→右）。
+ * 窗口化卸载会让整行的译文覆盖层一起消失，所以「屏内行包含的页」即「可能可见译文框的页」。
+ * 返回原始页 id，页码偏移（EPUB 0 基 → 1 基）由调用方换算。
+ * @param rows 纵向行表
+ * @param indices 当前挂载的行下标（来自 visibleRange / scroll 回调）
+ */
+export function collectVisiblePages(
+  rows: readonly VerticalRow[],
+  indices: readonly number[]
+): number[] {
+  const pages: number[] = []
+  for (const index of indices) {
+    const row = rows[index]
+    if (!row) continue
+    pages.push(...row.pages)
+  }
+  return pages
+}

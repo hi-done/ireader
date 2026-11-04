@@ -3,7 +3,11 @@
   <div
     ref="rootEl"
     class="ai-layer"
-    :class="{ selecting: selectable }"
+    :class="{
+      selecting: selectable,
+      /* 纵向窗口化挂载：滚动中行会反复挂载 / 卸载，pop-in 会变成一路「弹出」，故关掉入场动画 */
+      'no-anim': animateIn === false,
+    }"
     @pointerdown="onPointerDown"
   >
     <!-- 橡皮筋：拖拽中的预览框，不接收指针事件 -->
@@ -136,6 +140,13 @@ const props = defineProps<{
   selectable: boolean
   /** 门控可见性：翻页 / 动画 / 停留计时期间为假，译文框整体不渲染 */
   visible: boolean
+  /** 入场动画：默认开；纵向连续滚动传 false（窗口化挂载会反复重播动画） */
+  animateIn?: boolean
+  /**
+   * 位图来源：默认取同页盒的 canvas（PDF / 纵向）。
+   * EPUB 横向是 epub.js iframe 渲染、没有 canvas，由宿主播入「区域截图」实现。
+   */
+  captureSource?: (page: number) => Promise<HTMLCanvasElement | null>
 }>()
 
 const ai = useAiTranslationStore()
@@ -430,7 +441,7 @@ function onDragMove(e: PointerEvent): void {
   }
 }
 
-function onDragEnd(): void {
+async function onDragEnd(): Promise<void> {
   const box = rootEl.value?.getBoundingClientRect()
   const dragged = band.value
   stopDrag()
@@ -438,9 +449,16 @@ function onDragEnd(): void {
   // 误触过滤在纯逻辑里：小于 24×16px 直接返回 null
   const rect = normalizeRect(dragged, { width: box.width, height: box.height })
   if (!rect) return
-  // 裁图取位图（不是屏幕截图）：canvas 是 .page-wrap 的兄弟节点
-  const canvas = rootEl.value?.parentElement?.querySelector('canvas')
-  if (!canvas) return
+  // 位图来源：默认取同页盒 canvas（PDF .page-wrap / 纵向 .v-page）；
+  // EPUB 横向无 canvas，由宿主传入区域截图
+  const canvas = props.captureSource
+    ? await props.captureSource(props.page)
+    : rootEl.value?.parentElement?.querySelector('canvas')
+  if (!canvas) {
+    // 取不到位图（截图失败 / 页盒丢失）：本次框选放弃，但仍要退出选词，否则十字光标卡住
+    ai.endSelect()
+    return
+  }
   void ai.selectRect({
     page: props.page,
     rect,
@@ -792,6 +810,12 @@ watch(
     opacity: 1;
     transform: scale(1);
   }
+}
+
+/* 关闭入场动画：只摘 pop-in，框与折叠球的其它过渡不受影响 */
+.ai-layer.no-anim .ai-box,
+.ai-layer.no-anim .ai-ball {
+  animation: none;
 }
 
 @keyframes ai-fade-in {

@@ -64,6 +64,23 @@
           @trigger-enter="openZoomTip"
           @trigger-leave="closeTip"
         />
+        <!-- AI 框选翻译：图片型书（横向 / 上→下）显示；文字型无稳定页边界，不渲染 -->
+        <AiReaderMenu
+          v-if="isImageLayout"
+          ref="aiMenuRef"
+          :ready="aiReady"
+          :active="ai.selecting"
+          :has-records="hasAiRecords"
+          :hidden-all="ai.hiddenAll"
+          @toggle="onAiButton"
+          @hide-all="onAiHideAll"
+          @collapse-all="onAiCollapseAll"
+          @expand-all="onAiExpandAll"
+          @open="pinBars"
+          @close="unpinBars"
+          @trigger-enter="openAiTip"
+          @trigger-leave="closeTip"
+        />
         <button
           :aria-label="t('reader.fullscreen')"
           @click="toggleFullscreen"
@@ -75,7 +92,7 @@
       </div>
     </header>
 
-    <div class="page-area">
+    <div ref="pageAreaEl" class="page-area">
       <!-- epub.js 渲染容器：始终在布局中（打开时必须有确定宽高），加载态用提示层覆盖 -->
       <div
         ref="epubAreaEl"
@@ -106,9 +123,41 @@
         :initial-page="initialVerticalPage"
         :sizing="verticalSizing"
         :source="verticalSource"
+        :ai-book-title="aiBookTitle"
+        :ai-selectable="ai.selecting"
+        :ai-visible="true"
+        :ai-page-offset="1"
         @page-change="onVerticalPageChange"
         @turn="onVerticalStep"
       />
+      <!-- 图片型横向：epub.js 是 iframe 渲染、无 canvas，按每页图片盒叠覆盖层，裁剪走区域截图 -->
+      <div
+        v-if="isImageHorizontal && aiBookTitle"
+        ref="aiStageEl"
+        class="ai-stage"
+        :class="{ selecting: ai.selecting }"
+      >
+        <div
+          v-for="box in aiPageBoxes"
+          :key="box.page"
+          class="ai-stage-page"
+          :style="{
+            left: `${box.left}px`,
+            top: `${box.top}px`,
+            width: `${box.width}px`,
+            height: `${box.height}px`,
+          }"
+        >
+          <AiTranslationLayer
+            :page="box.page"
+            :book-title="aiBookTitle"
+            :selectable="ai.selecting"
+            :visible="aiOverlayVisible"
+            :animate-in="false"
+            :capture-source="captureAiPage"
+          />
+        </div>
+      </div>
     </div>
 
     <!-- DEV 诊断面板：Ctrl+Shift+D 切换（默认隐藏，正式构建不渲染） -->
@@ -148,6 +197,9 @@
       </button>
     </footer>
 
+    <!-- 选词 / 未启用提示：底部上方居中胶囊，自动淡出 -->
+    <div v-if="aiNotice" class="ai-notice">{{ aiNotice }}</div>
+
     <!-- 提示浮层：Teleport 到 body，顶栏毛玻璃的固定包含块不影响坐标；同一视图只挂一个实例 -->
     <CardTip
       :visible="tipAnchor !== null"
@@ -166,7 +218,6 @@ import { useRoute, useRouter } from 'vue-router'
 import type { Contents } from 'epubjs'
 import { useEpubReaderStore } from '../stores/epubReader'
 import { useLibraryStore } from '../stores/library'
-import { ipc } from '../services/ipc'
 import { getEpubDiag, pushNavDiag, waitViewsSettled } from '../services/epub'
 import { captureRegionToCanvas } from '../services/capture'
 import type { SelectOption } from '../services/selectMenu'
@@ -187,9 +238,16 @@ import { localizeError } from '../i18n/errors'
 import { compareTitles } from '../services/libraryList'
 import type { Direction } from '../../shared/types'
 import VerticalScrollView from '../components/reader/VerticalScrollView.vue'
+import AiTranslationLayer from '../components/reader/AiTranslationLayer.vue'
+import AiReaderMenu from '../components/reader/AiReaderMenu.vue'
+import { useAiNotice } from '../components/reader/useAiNotice'
+import { useSettingsStore } from '../stores/settings'
+import { useAiTranslationStore } from '../stores/aiTranslation'
 import { createEpubImageSource } from '../services/epubVertical'
 import type { VerticalPageSource, VerticalSizing } from '../services/verticalLayout'
 import { normalizeWheelDelta } from '../services/wheelScroll'
+import { exitFullscreen, exitedFullscreenRecently, isFullscreen, toggleFullscreen } from '../services/fullscreen'
+import { resolveReaderEsc } from '../services/readerEsc'
 
 const isDev = import.meta.env?.DEV === true
 
@@ -199,6 +257,8 @@ const route = useRoute()
 const router = useRouter()
 const store = useEpubReaderStore()
 const library = useLibraryStore()
+const settingsStore = useSettingsStore()
+const ai = useAiTranslationStore()
 
 const barsVisible = ref(false)
 let hideTimer: ReturnType<typeof setTimeout> | null = null
@@ -260,6 +320,95 @@ const bookTitle = computed(
   () => library.books.find((b) => b.id === store.bookId)?.title ?? ''
 )
 
+// —— AI 框选翻译：仅图片型纵向（页边界稳定，可复用 PDF 的归一化坐标与覆盖层） ——
+/** AI 可用 = 总开关开启且选中了有效的模型配置 */
+const aiReady = computed(() => {
+  const settings = settingsStore.settings.ai
+  return settings.enabled && settings.providers.some((p) => p.id === settings.activeProviderId)
+})
+const hasAiRecords = computed(() => ai.records.length > 0)
+/** 覆盖层书名：AI 未启用时传空（不挂覆盖层） */
+const aiBookTitle = computed(() => (aiReady.value ? bookTitle.value : ''))
+/** 下拉组件句柄：进选词前需要强制收起已展开的菜单 */
+const aiMenuRef = ref<InstanceType<typeof AiReaderMenu> | null>(null)
+
+/** 底部提示胶囊：选词提示与「未启用」提示共用，自动淡出 */
+const { text: aiNotice, show: showAiNotice, clear: clearAiNotice } = useAiNotice()
+
+/** AI 选词期间抑制工具栏：框选需要完整画面，这段时间任何唤出请求都丢弃 */
+let barsSuppressedByAi = false
+
+/** AI 按钮提示：锚点由 AiReaderMenu 透出 */
+function openAiTip(anchor: HTMLElement) {
+  openTipAt(anchor, t('ai.readerHint'))
+}
+
+/** 进入 / 退出选词：进入即隐藏工具栏（选词期间不可唤出），退出后保持隐藏 */
+function toggleAiSelect(): void {
+  if (ai.selecting) {
+    ai.endSelect()
+    return
+  }
+  ai.beginSelect()
+  enterAiSelectUi()
+  showAiNotice(t('ai.selectHint'))
+}
+
+/** 按钮不做真 disabled：禁用态下需要能弹出「去配置」提示 */
+function onAiButton(): void {
+  if (!aiReady.value) {
+    showAiNotice(t('ai.disabledTip'))
+    return
+  }
+  toggleAiSelect()
+}
+
+function onAiHideAll(): void {
+  ai.hideAll()
+}
+
+function onAiCollapseAll(): void {
+  void ai.collapseAll()
+}
+
+function onAiExpandAll(): void {
+  void ai.expandAll()
+}
+
+// 退出选词（再次点按钮 / Esc / 框选完成）统一收起提示并解除工具栏抑制（保持隐藏）
+watch(
+  () => ai.selecting,
+  (on) => {
+    if (!on) {
+      clearAiNotice()
+      exitAiSelectUi()
+    }
+  }
+)
+
+/** 立即隐藏并清掉隐藏计时（选词进/出共用） */
+function hideBarsNow(): void {
+  if (hideTimer) clearTimeout(hideTimer)
+  hideTimer = null
+  barsVisible.value = false
+}
+
+/** 进入 AI 选词：立即淡出顶/底栏并接管抑制 */
+function enterAiSelectUi(): void {
+  aiMenuRef.value?.closeMenu()
+  closeTip()
+  barsPinned = false
+  barsSuppressedByAi = true
+  hideBarsNow()
+}
+
+/** 退出 AI 选词：解除抑制但保持隐藏，鼠标移到上/下边缘时唤出照旧 */
+function exitAiSelectUi(): void {
+  barsSuppressedByAi = false
+  barsPinned = false
+  hideBarsNow()
+}
+
 const totalPages = computed(() => store.totalPages())
 
 const locationLabel = computed(() => {
@@ -310,6 +459,8 @@ const initialVerticalPage = computed(() => store.current?.index ?? 0)
 function onVerticalPageChange(page: number): void {
   store.setVerticalPosition(page)
   navIndex = store.current?.index ?? navIndex
+  // 屏内可同时有多页：按「已挂载行包含的页」裁剪临时框（页码已按 +1 换算成真实页）
+  ai.prunePending(verticalRef.value?.visibleAiPages() ?? [page + 1])
 }
 
 /** 纵向视图内热区点击：滚到上/下一行顶部（无动画） */
@@ -393,12 +544,14 @@ onBeforeUnmount(() => {
   window.removeEventListener('resize', onResize)
   if (diagTimer) clearInterval(diagTimer)
   if (hideTimer) clearTimeout(hideTimer)
+  stopAiBoxLoop()
   openSeq++ // 作废进行中的队列消费与动画编排
   pendingDelta = 0
   pendingJump = null
   clearBurstSession()
   unbindRenditionEvents()
   discardTurn()
+  ai.reset(null) // 作废在途翻译：离开阅读页后返回的结果不再渲染
   store.close()
 })
 
@@ -437,16 +590,22 @@ async function doOpen(id: number) {
   await nextTick()
   if (!epubAreaEl.value) throw new Error(t('reader.viewNotReady'))
   await store.open(id, epubAreaEl.value)
+  // 译文按真实页码存：先载入本书记录，纵向切换后覆盖层直接有数据
+  void ai.load(id)
   navIndex = store.current?.index ?? 0 // 新书权威页索引
   sliderIndex.value = navIndex
   bindRenditionEvents()
 }
 
 // —— iframe 内事件转发 ——
-// 键盘：epub.js 将 contents 的 keydown 自动 re-emit 到 rendition（passEvents）；
-// 滚轮不在其转发列表，需在每次渲染后手动挂到 iframe window 上
-/** 已挂滚轮转发的 iframe window：连续流同时存在多个视图，按窗口去重避免重复滚动 */
-const wheelWindows = new WeakSet<Window>()
+// 键盘：焦点在 iframe 内时父文档收不到 keydown，epub.js 会把 contents 的 keydown
+// re-emit 到 rendition（passEvents）；滚动不在其转发列表，需手动挂到 iframe window 上。
+// 键盘同时直挂 iframe window 兜底：某次视图重建后转发链若断裂，快捷键就整体失效，
+// 两路到达的是同一个事件对象，由 onKeydown 开头的 WeakSet 去重，不会翻两次页。
+/** 已挂事件的 iframe window：连续流同时存在多个视图，按窗口去重避免重复滚动 */
+const frameWindows = new WeakSet<Window>()
+/** 已处理过的按键事件（iframe 直挂与 rendition 转发共用同一对象） */
+const handledKeyEvents = new WeakSet<Event>()
 
 function onFrameWheel(e: WheelEvent) {
   // 纵向连续流：iframe 内滚轮不冒泡到父文档，手动转发给 epub 容器
@@ -466,14 +625,15 @@ function onFrameMousemove(e: MouseEvent) {
 }
 
 function onFrameRendered(_section: unknown, view: { contents?: Contents } | null | undefined) {
-  attachWheelWindow(view?.contents?.window)
+  attachFrameWindow(view?.contents?.window)
 }
 
-/** 给单个 iframe 挂滚轮转发（同一窗口只挂一次） */
-function attachWheelWindow(win: Window | null | undefined): void {
-  if (!win || wheelWindows.has(win)) return
-  wheelWindows.add(win)
+/** 给单个 iframe 挂滚轮与键盘转发（同一窗口只挂一次） */
+function attachFrameWindow(win: Window | null | undefined): void {
+  if (!win || frameWindows.has(win)) return
+  frameWindows.add(win)
   win.addEventListener('wheel', onFrameWheel, { passive: true })
+  win.addEventListener('keydown', onFrameKeydown, true)
 }
 
 function bindRenditionEvents() {
@@ -482,10 +642,10 @@ function bindRenditionEvents() {
   r.on('keydown', onFrameKeydown)
   r.on('mousemove', onFrameMousemove)
   r.on('rendered', onFrameRendered)
-  // 首次 display 的 rendered 可能在绑定前已派发：给已在册的 iframe 补挂滚轮。
+  // 首次 display 的 rendered 可能在绑定前已派发：给已在册的 iframe 补挂转发。
   // 类型声明把返回值写成单个 Contents，运行时为 Contents[]（rendition.js getContents）
   for (const contents of r.getContents() as unknown as Contents[]) {
-    attachWheelWindow(contents?.window)
+    attachFrameWindow(contents?.window)
   }
 }
 
@@ -535,13 +695,6 @@ function goBack() {
   } else {
     router.push('/')
   }
-}
-
-async function toggleFullscreen() {
-  const next = !document.fullscreenElement
-  if (next) await document.documentElement.requestFullscreen()
-  else await document.exitFullscreen()
-  ipc.window.setFullscreen(next)
 }
 
 function onHotzoneClick(side: 'left' | 'right') {
@@ -1032,7 +1185,7 @@ async function animatedTurn(delta: number, token: number): Promise<void> {
     const fromRight = (dir === 'forward') === (store.direction === 'ltr') // 同 PDF
     const tPlay = performance.now()
     pushNavDiag(
-      `[curl] play ${dir} fromRight=${fromRight} full=${document.fullscreenElement ? 1 : 0} ` +
+      `[curl] play ${dir} fromRight=${fromRight} full=${isFullscreen.value ? 1 : 0} ` +
         `shot=${from.width}x${from.height} budget=${budget} d=${Math.round(tPlay - t0)}ms ` +
         `cap=${Math.round(tCap - t0)} nav=${Math.round(tNav - tCap)} img=${Math.round(tPlay - tNav)}`
     )
@@ -1060,6 +1213,137 @@ const ZOOM_OPTIONS = [50, 75, 100, 125, 150, 200]
 
 /** 图片型书（pre-paginated）顶栏下拉框为缩放，文字型书为字号 */
 const isImageLayout = computed(() => store.layout === 'pre-paginated')
+/** 图片型横向（左右翻页）：epub.js 用 iframe 渲染，页盒与截图需单独换算 */
+const isImageHorizontal = computed(() => isImageLayout.value && !isVertical.value)
+
+// —— AI 框选翻译（图片型横向）——
+// 没有 canvas：页盒取 iframe 内 img/svg 的矩形（fitPrePaginatedContents 把图片按 fit 尺寸
+// 居中在 iframe 里，直接用 iframe 矩形会让归一化坐标带上留白误差），位图走区域截图。
+interface AiPageBox {
+  /** 真实页码：spine 索引 + 1，与图片型纵向共用同一条译文记录 */
+  page: number
+  /** 相对 .ai-stage 的定位（px） */
+  left: number
+  top: number
+  width: number
+  height: number
+  /** 窗口坐标：区域截图用 */
+  x: number
+  y: number
+}
+
+const aiStageEl = ref<HTMLElement | null>(null)
+const aiPageBoxes = ref<AiPageBox[]>([])
+/** 门控可见性：翻页 / 卷曲动画期间不渲染译文框（与横向 PDF 同口径） */
+const aiOverlayVisible = ref(false)
+
+/** 页盒是否等价（0.5px 容差）：轮询高频调用，避免无谓重渲染 */
+function sameAiPageBoxes(a: AiPageBox[], b: AiPageBox[]): boolean {
+  if (a.length !== b.length) return false
+  return a.every((box, i) => {
+    const o = b[i]
+    return (
+      box.page === o.page &&
+      Math.abs(box.left - o.left) < 0.5 &&
+      Math.abs(box.top - o.top) < 0.5 &&
+      Math.abs(box.width - o.width) < 0.5 &&
+      Math.abs(box.height - o.height) < 0.5
+    )
+  })
+}
+
+/** 从 rendition 的实时 iframe 读出每页图片盒（翻页 / 缩放 / 单双页切换后矩形全变） */
+function refreshAiPageBoxes(): void {
+  aiOverlayVisible.value = !switching.value && !isTurnCurlActive()
+  const stage = aiStageEl.value
+  const rendition = store.getRendition()
+  if (!stage || !rendition) {
+    if (aiPageBoxes.value.length) aiPageBoxes.value = []
+    return
+  }
+  const stageRect = stage.getBoundingClientRect()
+  let contents: Contents[] = []
+  try {
+    // 类型声明写成单个 Contents，运行时为 Contents[]（同 bindRenditionEvents）
+    contents = rendition.getContents() as unknown as Contents[]
+  } catch {
+    contents = []
+  }
+  const next: AiPageBox[] = []
+  for (const c of contents) {
+    const frame = c?.window?.frameElement as HTMLElement | null | undefined
+    const el = c?.document?.querySelector('img, svg') as HTMLElement | null
+    if (!frame || !el) continue
+    const frameRect = frame.getBoundingClientRect()
+    const rect = el.getBoundingClientRect()
+    if (!(rect.width > 0) || !(rect.height > 0)) continue
+    // iframe 内的矩形是自身坐标系：加 iframe 偏移换成窗口坐标
+    const x = frameRect.left + rect.left
+    const y = frameRect.top + rect.top
+    next.push({
+      page: (c.sectionIndex ?? 0) + 1,
+      left: x - stageRect.left,
+      top: y - stageRect.top,
+      width: rect.width,
+      height: rect.height,
+      x,
+      y,
+    })
+  }
+  if (!sameAiPageBoxes(aiPageBoxes.value, next)) aiPageBoxes.value = next
+  // 翻走的那页不会再显示临时框：按挂载中的页裁剪（只在页集合变化时做，避免轮询里空转）
+  const pagesKey = next.map((b) => b.page).join(',')
+  if (pagesKey !== lastPrunedKey) {
+    lastPrunedKey = pagesKey
+    ai.prunePending(next.map((b) => b.page))
+  }
+}
+
+/** 区域截图即该页位图：iframe 内容取不到 DOM 像素，只能由主进程合成 */
+async function captureAiPage(page: number): Promise<HTMLCanvasElement | null> {
+  const box = aiPageBoxes.value.find((b) => b.page === page)
+  if (!box) return null
+  try {
+    return await captureRegionToCanvas({ x: box.x, y: box.y, width: box.width, height: box.height })
+  } catch {
+    return null // 截图失败按「无位图」处理：放弃本次框选，不抛错
+  }
+}
+
+/** 页盒轮询：epub.js 自行重建 iframe，没有可订阅的几何变更事件 */
+const AI_BOX_POLL_MS = 180
+let aiBoxTimer: ReturnType<typeof setInterval> | null = null
+/** 上次裁剪 pending 用的页集合：同一窗口内不重复写 store */
+let lastPrunedKey = ''
+
+function startAiBoxLoop(): void {
+  if (aiBoxTimer) return
+  refreshAiPageBoxes()
+  aiBoxTimer = setInterval(refreshAiPageBoxes, AI_BOX_POLL_MS)
+}
+
+function stopAiBoxLoop(): void {
+  if (aiBoxTimer) clearInterval(aiBoxTimer)
+  aiBoxTimer = null
+  lastPrunedKey = ''
+  if (aiPageBoxes.value.length) aiPageBoxes.value = []
+}
+
+watch(
+  isImageHorizontal,
+  (on) => {
+    if (on) startAiBoxLoop()
+    else stopAiBoxLoop()
+  },
+  { immediate: true }
+)
+
+// 退出图片型（切回文字型书）：覆盖层随视图卸载，退出选词并清掉临时框
+watch(isImageLayout, (on) => {
+  if (on) return
+  ai.endSelect()
+  ai.prunePending([])
+})
 
 /** 顶栏下拉当前值：图片型书取缩放，文字型书取字号（百分比整数） */
 const zoomValue = computed(() => (isImageLayout.value ? store.zoom : store.fontSize))
@@ -1212,6 +1496,8 @@ async function finishSlideCurl(finalIndex: number): Promise<void> {
 
 let wheelLock = false
 function onWheel(e: WheelEvent) {
+  // 选词中不翻页 / 不缩放：拖框时页面跟着跳会取错区域
+  if (ai.selecting) return
   if (e.ctrlKey || e.metaKey) {
     // Ctrl/Cmd+滚轮：图片型书缩放 / 文字型书字号步进（阻止浏览器页缩放）
     e.preventDefault()
@@ -1251,6 +1537,7 @@ function onRootWheel(e: WheelEvent): void {
 }
 
 function showBarsTemporarily(ms = 3000) {
+  if (barsSuppressedByAi) return
   barsVisible.value = true
   if (hideTimer) clearTimeout(hideTimer)
   hideTimer = null
@@ -1297,10 +1584,30 @@ function onResize() {
   }, 200)
 }
 
+/** 表单控件（底栏滑块等）聚焦时仍需让给控件的按键；其余快捷键照常生效 */
+const FORM_NAV_KEYS = new Set([
+  'ArrowLeft',
+  'ArrowRight',
+  'ArrowUp',
+  'ArrowDown',
+  'Home',
+  'End',
+  'PageUp',
+  'PageDown',
+  ' ',
+  'Enter',
+])
+
 function onKeydown(e: KeyboardEvent) {
+  // 去重：iframe window 直挂与 rendition re-emit 可能先后到达同一个事件对象
+  if (handledKeyEvents.has(e)) return
+  handledKeyEvents.add(e)
   const target = e.target as HTMLElement
-  if (target.tagName === 'INPUT' || target.tagName === 'SELECT' || target.tagName === 'TEXTAREA') {
-    return // 滑块等控件聚焦时让方向键留给控件自身
+  // 只让位导航键：拖过滑块后焦点留在 input 上时，A / F 等快捷键仍应生效
+  const inField =
+    target.tagName === 'INPUT' || target.tagName === 'SELECT' || target.tagName === 'TEXTAREA'
+  if (inField && FORM_NAV_KEYS.has(e.key)) {
+    return
   }
   if (e.ctrlKey && e.shiftKey && (e.key === 'D' || e.key === 'd')) {
     e.preventDefault()
@@ -1361,12 +1668,31 @@ function onKeydown(e: KeyboardEvent) {
       break
     case 'f':
     case 'F':
-      toggleFullscreen()
+      void toggleFullscreen()
       break
-    case 'Escape':
-      if (document.fullscreenElement) document.exitFullscreen()
+    case 'a':
+    case 'A':
+      // 仅图片型书（横向 / 上→下）挂了覆盖层：文字型没有稳定页边界，按了必须给反馈，
+      // 否则与「快捷键失效」无法区分
+      if (!isImageLayout.value) {
+        showAiNotice(t('ai.textUnsupported'))
+        break
+      }
+      if (!aiReady.value) showAiNotice(t('ai.disabledTip'))
+      else toggleAiSelect()
+      break
+    case 'Escape': {
+      // 与 PDF 共用同一优先级：选词 > 全屏 > 返回文库
+      const action = resolveReaderEsc({
+        selecting: ai.selecting,
+        fullscreen: isFullscreen.value,
+        justExitedFullscreen: exitedFullscreenRecently(),
+      })
+      if (action === 'exitAiSelect') ai.endSelect()
+      else if (action === 'exitFullscreen') void exitFullscreen()
       else goBack()
       break
+    }
   }
 }
 </script>
@@ -1413,11 +1739,46 @@ function onKeydown(e: KeyboardEvent) {
   opacity: 1;
 }
 
+/* 淡出态不拦截指针：隐藏后的工具栏不应接住页面上的点击（与 PDF 对齐） */
+.top-bar:not(.visible),
+.bottom-bar:not(.visible) {
+  pointer-events: none;
+}
+
 .book-nav {
   font-size: 12px;
   padding: 4px 10px;
   white-space: nowrap;
   flex-shrink: 0;
+}
+
+/* 底部提示胶囊：选词提示 / 未启用提示（高于顶底栏 z2） */
+.ai-notice {
+  position: absolute;
+  left: 50%;
+  bottom: 64px;
+  z-index: 3;
+  transform: translateX(-50%);
+  padding: 8px 14px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(12px) saturate(160%);
+  color: #fff;
+  font-size: 12px;
+  line-height: 1.3;
+  pointer-events: none;
+  animation: ai-notice-in 160ms ease-out;
+}
+
+@keyframes ai-notice-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, 6px);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
 }
 
 .debug-panel {
@@ -1540,6 +1901,26 @@ function onKeydown(e: KeyboardEvent) {
   position: absolute;
   inset: 0;
   z-index: 1;
+}
+
+/* 图片型横向：每页一个绝对定位页盒，坐标口径与自适应缩放后的图片盒一致 */
+.ai-stage {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+}
+
+/* 选词态接管整块阅读区：拖框不穿透到 iframe / 热区触发翻页 */
+.ai-stage.selecting {
+  pointer-events: auto;
+  cursor: crosshair;
+}
+
+/* 页盒本身不吃指针：只有内部 .ai-layer 在选词态接管，常态仍由热区翻页 */
+.ai-stage-page {
+  position: absolute;
+  pointer-events: none;
 }
 
 .state-tip {

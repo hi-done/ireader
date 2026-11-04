@@ -348,8 +348,22 @@ export function registerIpcHandlers(getWin: () => BrowserWindow | null): void {
   ipcMain.handle(
     'window:setFullscreen',
     wrap(({ fullscreen }: { fullscreen: boolean }) => {
-      getWin()?.setFullScreen(fullscreen)
+      const win = getWin()
+      if (!win) return
+      win.setFullScreen(fullscreen)
+      // 回显请求值：部分平台不保证派发 enter/leave-full-screen，渲染层收不到回传就会
+      // 停在旧值（表现为 F 键退不出全屏、Esc 被误判成「返回文库」）。事件回传随后幂等校正。
+      if (!win.webContents.isDestroyed()) {
+        win.webContents.send('window:fullscreenChanged', { fullscreen })
+      }
+      logger.info(`[window] setFullscreen ${fullscreen} → isFullScreen=${win.isFullScreen()}`)
     })
+  )
+
+  // 全屏状态查询：渲染层启动时同步一次（窗口不存在按非全屏处理，不抛错）
+  ipcMain.handle(
+    'window:getFullscreen',
+    wrap(() => getWin()?.isFullScreen() ?? false)
   )
 
   ipcMain.handle(

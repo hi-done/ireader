@@ -14,6 +14,15 @@
         <div v-for="(page, j) in rows[i].pages" :key="page" class="v-page" :style="pageStyle(i, j)">
           <canvas :ref="(el) => setCanvasRef(page, el)" @click="onCanvasClick(page, $event)" />
           <span v-if="failedSet.has(page)" class="v-fail">{{ page }} ↻</span>
+          <!-- 译文覆盖层：挂在页盒内即复用横向的归一化坐标与字号口径；行卸载时随页一起消失 -->
+          <AiTranslationLayer
+            v-if="aiBookTitle"
+            :page="page + aiPageOffset"
+            :book-title="aiBookTitle"
+            :selectable="aiSelectable"
+            :visible="aiVisible"
+            :animate-in="false"
+          />
         </div>
       </div>
     </div>
@@ -24,8 +33,10 @@
 // 纵向连续滚动视图：行盒布局 + 窗口化挂载 + 渲染队列 + 滚动定位 + 测量校正 + 进度上报
 // 对应设计文档 specs/阅读方向上至下连续滚动设计方案-20261023.md §4 / §6.2
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import AiTranslationLayer from './AiTranslationLayer.vue'
 import {
   buildMetrics,
+  collectVisiblePages,
   computePageBox,
   estimateRatio,
   findRowByPage,
@@ -48,8 +59,22 @@ const props = withDefaults(
     sizing: VerticalSizing
     source: VerticalPageSource
     gap?: number
+    /** AI 覆盖层书名：为空表示本视图不挂覆盖层（AI 未启用等） */
+    aiBookTitle?: string
+    /** AI 选词态：为真时覆盖层接管指针拖框 */
+    aiSelectable?: boolean
+    /** AI 覆盖层门控可见性（翻页 / 重排期间置假） */
+    aiVisible?: boolean
+    /** 页码偏移：PDF / CBZ / MOBI 为 0；EPUB 图片型页 id 是 0 基 spine 索引，+1 才对上库里的真实页码 */
+    aiPageOffset?: number
   }>(),
-  { gap: VERTICAL_ROW_GAP }
+  {
+    gap: VERTICAL_ROW_GAP,
+    aiBookTitle: '',
+    aiSelectable: false,
+    aiVisible: true,
+    aiPageOffset: 0,
+  }
 )
 
 const emit = defineEmits<{
@@ -344,6 +369,8 @@ function onPointerDown(e: PointerEvent): void {
 function onClick(e: MouseEvent): void {
   const el = scrollEl.value
   if (!el) return
+  // 落在译文框 / 选词拖框上的点击不应被当成热区翻行
+  if ((e.target as HTMLElement | null)?.closest('.ai-layer')) return
   if (Math.abs(e.clientX - downX) + Math.abs(e.clientY - downY) > 8) return
   const rect = el.getBoundingClientRect()
   const x = e.clientX - rect.left
@@ -462,6 +489,8 @@ defineExpose({
   step,
   /** 当前顶部行索引 */
   currentRow,
+  /** 当前窗口内挂载的页（已换算为 1 基真实页码），供 AI 覆盖层裁剪 pending 记录 */
+  visibleAiPages,
 })
 
 function scrollToPage(page: number): void {
@@ -483,6 +512,11 @@ function step(delta: number): void {
 
 function currentRow(): number {
   return rowAtOffset(metrics.value, scrollEl.value?.scrollTop ?? 0)
+}
+
+/** 窗口内页 → 真实页码（加偏移）：不在窗口里的页无法看到译文框，其 pending 可提前作废 */
+function visibleAiPages(): number[] {
+  return collectVisiblePages(props.rows, visibleRows.value).map((p) => p + props.aiPageOffset)
 }
 
 onMounted(() => {

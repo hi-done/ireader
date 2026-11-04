@@ -100,6 +100,9 @@ export const ipc = {
   },
   window: {
     setFullscreen: (fullscreen: boolean) => unwrap(api().window.setFullscreen(fullscreen)),
+    getFullscreen: () => unwrap(api().window.getFullscreen()),
+    onFullscreenChanged: (listener: Parameters<typeof window.ireader.window.onFullscreenChanged>[0]) =>
+      api().window.onFullscreenChanged(listener),
     captureRegion: (rect: CaptureRegionRect) => unwrap(api().window.captureRegion(rect)),
   },
   shell: {

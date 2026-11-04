@@ -20,6 +20,7 @@ import type {
   UpdateCheckResult,
   UpdateProgress,
   UpdateStatus,
+  WindowFullscreenState,
 } from '../shared/types'
 
 /** 渲染进程通过 window.ireader 访问的类型安全 API，对应设计文档 §6.2/§6.3 */
@@ -123,6 +124,14 @@ const ireaderApi = {
   window: {
     setFullscreen: (fullscreen: boolean): Promise<Result<void>> =>
       ipcRenderer.invoke('window:setFullscreen', { fullscreen }),
+    /** 读取窗口当前全屏态（渲染层启动时同步一次） */
+    getFullscreen: (): Promise<Result<boolean>> => ipcRenderer.invoke('window:getFullscreen'),
+    /** 订阅窗口全屏变化（返回取消函数，仿 library.onChanged） */
+    onFullscreenChanged: (listener: (payload: WindowFullscreenState) => void) => {
+      const handler = (_event: unknown, payload: WindowFullscreenState) => listener(payload)
+      ipcRenderer.on('window:fullscreenChanged', handler)
+      return () => ipcRenderer.off('window:fullscreenChanged', handler)
+    },
     /** 截取窗口内容区指定矩形（含 iframe 合成输出）；EPUB 翻页冻结帧用，纯本地能力 */
     captureRegion: (rect: CaptureRegionRect): Promise<Result<Uint8Array>> =>
       ipcRenderer.invoke('window:captureRegion', rect),

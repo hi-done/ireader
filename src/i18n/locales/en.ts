@@ -306,6 +306,7 @@ export const en = {
   'ai.readerHint': 'AI selection translation (A)',
   'ai.selectHint': 'Drag to select text to translate. Esc to cancel',
   'ai.disabledTip': 'AI translation is off. Configure it in settings first',
+  'ai.textUnsupported': 'AI selection translation is unavailable for reflowable text books',
   'ai.noText': 'No text detected',
   'ai.translating': 'Translating…',
   'ai.box.collapse': 'Collapse translation',

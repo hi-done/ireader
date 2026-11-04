@@ -4,6 +4,7 @@ import './style.css'
 import App from './App.vue'
 import router from './router'
 import { ipc } from './services/ipc'
+import { initFullscreenSync } from './services/fullscreen'
 import { useSettingsStore } from './stores/settings'
 import { setLocale } from './i18n'
 import { resolveLocale } from '../shared/types'
@@ -30,6 +31,9 @@ async function bootstrap() {
     // 主进程不可用时以默认设置（跟随系统）启动，避免白屏
   }
   setLocale(resolveLocale(settingsStore.settings.locale, navigator.language))
+
+  // 全屏状态单点初始化：早于路由挂载，阅读页首次渲染即可读到正确值
+  initFullscreenSync()
 
   // 设置页切换语言后单点刷新：模板内 t() 读取同一 ref，全站自动重渲染
   watch(
