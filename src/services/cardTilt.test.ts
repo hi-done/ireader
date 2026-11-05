@@ -5,35 +5,43 @@ import { computeCardTilt } from './cardTilt'
 const RECT = { left: 100, top: 200, width: 160, height: 220 }
 
 describe('computeCardTilt - 相对位置映射', () => {
-  it('卡片正中：无倾角、高光居中', () => {
+  it('卡片正中：无倾角、高光居中、偏移为零', () => {
     const tilt = computeCardTilt({ ...RECT, clientX: 180, clientY: 310 })
     expect(tilt.rotateX).toBe(0)
     expect(tilt.rotateY).toBe(0)
     expect(tilt.glareX).toBe(50)
     expect(tilt.glareY).toBe(50)
+    expect(tilt.offsetX).toBe(0)
+    expect(tilt.offsetY).toBe(0)
     expect(tilt.inside).toBe(true)
   })
 
-  it('左上角：上仰且左侧后仰', () => {
+  it('左上角：上仰且左侧后仰，偏移负向到边', () => {
     const tilt = computeCardTilt({ ...RECT, clientX: 100, clientY: 200 })
     expect(tilt.rotateX).toBe(6)
     expect(tilt.rotateY).toBe(-6)
     expect(tilt.glareX).toBe(0)
     expect(tilt.glareY).toBe(0)
+    expect(tilt.offsetX).toBe(-1)
+    expect(tilt.offsetY).toBe(-1)
   })
 
-  it('右下角：下俯且右侧后仰', () => {
+  it('右下角：下俯且右侧后仰，偏移正向到边', () => {
     const tilt = computeCardTilt({ ...RECT, clientX: 260, clientY: 420 })
     expect(tilt.rotateX).toBe(-6)
     expect(tilt.rotateY).toBe(6)
     expect(tilt.glareX).toBe(100)
     expect(tilt.glareY).toBe(100)
+    expect(tilt.offsetX).toBe(1)
+    expect(tilt.offsetY).toBe(1)
   })
 
-  it('右边缘中点：只产生 Y 轴倾角', () => {
+  it('右边缘中点：只产生 Y 轴倾角，纵向无偏移', () => {
     const tilt = computeCardTilt({ ...RECT, clientX: 260, clientY: 310 })
     expect(tilt.rotateY).toBe(6)
     expect(tilt.rotateX).toBe(0)
+    expect(tilt.offsetX).toBe(1)
+    expect(tilt.offsetY).toBe(0)
   })
 })
 
@@ -42,6 +50,8 @@ describe('computeCardTilt - 边界与参数', () => {
     const tilt = computeCardTilt({ ...RECT, clientX: 50, clientY: 310 })
     expect(tilt.rotateY).toBe(-6)
     expect(tilt.glareX).toBe(0)
+    // 视差偏移同样钉在边界，不向外扩展
+    expect(tilt.offsetX).toBe(-1)
     expect(tilt.inside).toBe(false)
   })
 
@@ -53,7 +63,23 @@ describe('computeCardTilt - 边界与参数', () => {
 
   it('宽或高为 0：返回零值且 inside=false', () => {
     const tilt = computeCardTilt({ left: 0, top: 0, width: 0, height: 100, clientX: 0, clientY: 0 })
-    expect(tilt).toEqual({ rotateX: 0, rotateY: 0, glareX: 50, glareY: 50, inside: false })
+    expect(tilt).toEqual({
+      rotateX: 0,
+      rotateY: 0,
+      glareX: 50,
+      glareY: 50,
+      offsetX: 0,
+      offsetY: 0,
+      inside: false,
+    })
+  })
+
+  it('倾角与归一化偏移同源（防止两套映射漂移）', () => {
+    const tilt = computeCardTilt({ ...RECT, clientX: 132, clientY: 260 }, 8)
+    expect(tilt.rotateY).toBe(tilt.offsetX * 8)
+    expect(tilt.rotateX).toBe(-tilt.offsetY * 8)
+    expect(tilt.offsetX).toBeCloseTo(2 * (32 / 160) - 1, 10)
+    expect(tilt.offsetY).toBeCloseTo(2 * (60 / 220) - 1, 10)
   })
 
   it('绝对坐标偏移不影响相对比例', () => {

@@ -1,4 +1,5 @@
-// 文库卡片 3D 倾斜跟随：指针位置 → 倾角与高光中心（纯函数）+ 指针生命周期接线（DOM）
+// 文库卡片 3D 倾斜跟随：指针位置 → 倾角 / 高光中心 / 归一化偏移（纯函数）+ 指针生命周期接线（DOM）
+// 归一化偏移供视差层使用，见 specs/20261105-合集卡片视差深度美化设计方案.md §4.1
 // 对应设计文档 specs/图书卡片交互与图标苹果风美化设计方案-20261021.md §4
 
 export interface CardTiltRect {
@@ -25,6 +26,10 @@ export interface CardTilt {
   glareX: number
   /** 高光中心纵坐标（百分比 0~100） */
   glareY: number
+  /** 指针相对卡片中心的归一化横向偏移（-1~1，右为正）；供视差层换算 px 位移 */
+  offsetX: number
+  /** 指针相对卡片中心的归一化纵向偏移（-1~1，下为正）；供视差层换算 px 位移 */
+  offsetY: number
   /** 指针是否仍在卡片矩形内（越界坐标会被钳制到边缘） */
   inside: boolean
 }
@@ -57,19 +62,25 @@ export function computeCardTilt(input: CardTiltInput, maxDeg = DEFAULT_MAX_DEG):
   const { left, top, width, height, clientX, clientY } = input
   // 隐藏 / 尚未布局的卡片：不倾斜，高光居中
   if (width <= 0 || height <= 0) {
-    return { rotateX: 0, rotateY: 0, glareX: 50, glareY: 50, inside: false }
+    return { rotateX: 0, rotateY: 0, glareX: 50, glareY: 50, offsetX: 0, offsetY: 0, inside: false }
   }
   const rawX = (clientX - left) / width
   const rawY = (clientY - top) / height
   const inside = rawX >= 0 && rawX <= 1 && rawY >= 0 && rawY <= 1
   const ratioX = clamp01(rawX)
   const ratioY = clamp01(rawY)
+  // 归一化偏移是倾角与视差的共同源头：rotateY = offsetX * maxDeg、rotateX = -offsetY * maxDeg
+  const offsetX = ratioX * 2 - 1
+  const offsetY = ratioY * 2 - 1
   return {
-    rotateY: (ratioX * 2 - 1) * maxDeg,
-    // 指针在上半部应上仰，故 Y 轴反向映射
-    rotateX: (1 - ratioY * 2) * maxDeg,
+    rotateY: offsetX * maxDeg,
+    // 指针在上半部应上仰，故 Y 轴反向映射；写成 `0 -` 而非取负，
+    // 是为避免正中位置算出 -0（Object.is(-0, 0) 为 false，会污染数值断言）
+    rotateX: 0 - offsetY * maxDeg,
     glareX: ratioX * 100,
     glareY: ratioY * 100,
+    offsetX,
+    offsetY,
     inside,
   }
 }
@@ -118,6 +129,9 @@ export function attachCardTilt(el: HTMLElement, options: CardTiltOptions = {}): 
     el.style.setProperty('--tilt-y', `${tilt.rotateY.toFixed(2)}deg`)
     el.style.setProperty('--glare-x', `${tilt.glareX.toFixed(1)}%`)
     el.style.setProperty('--glare-y', `${tilt.glareY.toFixed(1)}%`)
+    // 无量纲偏移：视差层在 CSS 侧各自乘 px 系数（合集卡封面媒体 / 纸页缘消费）
+    el.style.setProperty('--par-x', tilt.offsetX.toFixed(3))
+    el.style.setProperty('--par-y', tilt.offsetY.toFixed(3))
   }
 
   /** 复位：取消未执行的帧，移除内联变量让样式表默认值（0deg / 50%）接管，由 CSS 缓出回正 */
@@ -131,6 +145,8 @@ export function attachCardTilt(el: HTMLElement, options: CardTiltOptions = {}): 
     el.style.removeProperty('--tilt-y')
     el.style.removeProperty('--glare-x')
     el.style.removeProperty('--glare-y')
+    el.style.removeProperty('--par-x')
+    el.style.removeProperty('--par-y')
   }
 
   function onEnter(event: PointerEvent): void {
