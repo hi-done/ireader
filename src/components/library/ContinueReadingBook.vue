@@ -21,12 +21,8 @@
             <!-- 降级出口：减弱动效 / 无 hover 时内页永远不可见，进度改叠在封面 -->
             <span v-if="percent !== null" class="cover-progress">{{ percent }}%</span>
           </li>
-          <!-- 封面内侧 = 翻开后的左页：ltr 放当前页，rtl 放下一页 -->
-          <li class="cover-inside" aria-hidden="true">
-            <img v-if="leftUrl" :src="leftUrl" alt="" @error="onLeftError" />
-            <span v-else-if="pendingLeft" class="page-loading" />
-            <span class="leaf-shade leaf-shade-left" />
-          </li>
+          <!-- 封面内侧：翻开后只是一块空白衬板，衬在翻过去那叠纸页背后 -->
+          <li class="cover-inside" aria-hidden="true"></li>
         </ul>
 
         <!-- 纸页：第 2 张就是右页（ltr 放下一页，rtl 放先读的当前页），合上时被封面压住 -->
@@ -35,9 +31,14 @@
           <li class="page-right">
             <img v-if="rightUrl" :src="rightUrl" alt="" @error="onRightError" />
             <span v-else-if="pendingRight" class="page-loading" aria-hidden="true" />
-            <span class="leaf-shade leaf-shade-right" />
           </li>
-          <li></li>
+          <!-- 左页 = 第 3 张纸页（ltr 放当前页，rtl 放下一页）：翻开时它翻得最少、深度上离观众
+               最近，整张纸面看得全；li:4 / li:5 更大的角度扇在它外侧。它也是合上时最浅的那张，
+               角度从 -32° 单调续到 -118°，三张纸途中不会互换前后 -->
+          <li class="page-left">
+            <img v-if="leftUrl" :src="leftUrl" alt="" @error="onLeftError" />
+            <span v-else-if="pendingLeft" class="page-loading" aria-hidden="true" />
+          </li>
           <li></li>
           <li></li>
         </ul>
@@ -58,9 +59,10 @@
 
 <script setup lang="ts">
 // 合集侧栏「继续阅读」的翻开书：合上是一本斜放 34° 的硬皮书（结构与角度照搬
-// demos/CodePen Home CSS Animated books），悬停时封面绕书脊扇到 -188°，整本右移缩小一档
-// 「后退」，露出的两面按本书阅读方向排内容：rtl（日漫）右先读 → 右面当前页、左面下一页；
-// ltr（韩漫）反之。
+// demos/CodePen Home CSS Animated books），悬停时封面绕书脊扇到 -145°、右页翻到 -35°，
+// 后三张纸页 -118°/-130°/-140° 扇开，整本右移缩小一档「后退」；露出的两面按本书阅读方向排内容：
+// rtl（日漫）右先读 → 右面当前页、左面下一页；ltr（韩漫）反之。左面内容挂在扇面里
+// 深度最前的那张纸页（li:3，-118°）上，不是封面内侧；扇面比封面慢开，不会抢在封面之前摊开。
 // 设计文档：specs/20261105-合集继续阅读栏3D硬皮书设计方案.md §4.2 / §5
 import { computed, onBeforeUnmount, onMounted, ref, watch, type Ref } from 'vue'
 import type { Book } from '../../../shared/types'
@@ -270,7 +272,8 @@ onBeforeUnmount(() => {
 <style scoped>
 /* —— 几何：书 138×190，是 demos/CodePen Home CSS Animated books（160×220）的 0.8625 倍，
       下面所有 translateZ / 偏移量都按同一系数换算过。合上时封面斜视 34°、右缘与下方露出层叠的
-      纸页边；翻开时整本再右移 49px、缩到 0.74「后退」一档，跨页 200px 稳落在 260px 的侧栏内容里 —— */
+      纸页边；翻开时封面扇到 145°、右页翻到 35°，后三张纸页 -118°/-130°/-140° 扇成左页，
+      整本右移 53px、缩到 0.9「后退」一档，半开姿态 222px 宽稳落在 260px 的侧栏内容里 —— */
 .book-stage {
   position: relative;
   display: flex;
@@ -302,7 +305,7 @@ onBeforeUnmount(() => {
   transform-style: preserve-3d;
   /* +5px：斜视下书体偏左、纸页边在右，合起来才是视觉居中 */
   transform: translateX(5px);
-  /* 合上时的接地投影；翻开时换成更铺开的一档 */
+  /* 合上时的接地投影；翻开时换成更铺开的一档（见文件末尾 hover 块） */
   --book-lift: 7px 2px 34px 10px var(--book-shadow);
   transition: transform 0.75s cubic-bezier(0.45, 0.15, 0.25, 1);
 }
@@ -316,7 +319,7 @@ onBeforeUnmount(() => {
 
 /* ===== 底色与厚度面：整段照搬 demo ===== */
 /* 封面正面吃 backface-visibility: hidden，背面朝观众时自动隐身；封面内侧同理，
-   所以合上时看不到内页，翻开后净角剩 8°，正面朝观众才显形 */
+   所以合上时看不到内页，翻开后它转成朝观众的那块空白衬板 */
 .hardcover_front li:first-child { background-color: #eee; backface-visibility: hidden; }
 .hardcover_front li:last-child { background: #fffbec; backface-visibility: hidden; }
 .hardcover_back li:first-child { background: #fffbec; }
@@ -561,19 +564,19 @@ onBeforeUnmount(() => {
   object-fit: cover;
 }
 
-/* —— 封面内侧 = 翻开后的左页。板面本身转了 180°，加封面共 -188° 后净角只剩 8°，
-      内容正对观众、不镜像，所以这里**不能**再加 scaleX(-1) —— */
+/* —— 封面内侧 = 翻开后衬在左页背后的空白硬板。板面本身转了 180°，加封面 -145° 后净角只剩 35°，
+      仍朝向观众，所以这里**不能**再加 scaleX(-1) —— */
 .cover-inside {
   background: #fffbec;
   /* 顺时针转 180°：元素右侧的圆角落在屏幕左侧，正好是左页的外切口 */
   border-radius: 0 4px 4px 0;
 }
 
-/* —— 两面内容：铺满整块板、等比缩放（漫画页是整页图，contain 才能完整入框）。
-      左页（封面内侧）合上时背对观众、天然看不见，内容常显，随封面一起转过来就像真书；
-      右页得先压住：合上时 li:2 比封面宽，会在封面右侧露出约 10px，翻开后再淡入 —— */
-.cover-inside img,
-.page-right img {
+/* —— 两面内容：铺满整张纸、等比缩放（漫画页是整页图，contain 才能完整入框）。
+      右页得先压住：合上时 li:2 比封面宽，会在封面右侧露出约 10px，翻开后再淡入；
+      左页在 li:3 上，图在纸的背面，合上态被纸面自己挡着 —— */
+.page-right img,
+.page-left img {
   position: absolute;
   inset: 0;
   width: 100%;
@@ -585,6 +588,17 @@ onBeforeUnmount(() => {
 .page-right img {
   opacity: 0;
   transition: opacity 0.18s ease;
+}
+
+/* 左页那张纸翻到 -118°，看到的是它的**背面**：直接铺图会左右镜像（漫画页字是反的）。
+   给图再绕自身竖轴转 180°，镜像抵消；translateZ 微推 0.5px，图就落在纸背面那一侧 ——
+   纸页没转过 90° 时正面朝人，图被纸面整个挡在后面（不需要再加任何 opacity 门控）；
+   转过 90° 图才露出来。backface-visibility 兜的是接近 90° 时那 1px 侧边（实测 -85° 会从
+   纸缘漏出一道红线，加上就没了）。图与纸共用同一个 3D 上下文，中间不能插不带
+   preserve-3d 的包裹元素，否则图会被压平到纸面上、在 -75° 附近反着露出来 —— */
+.page-left img {
+  transform: rotateY(180deg) translateZ(0.5px);
+  backface-visibility: hidden;
 }
 
 .cover-placeholder {
@@ -641,72 +655,46 @@ onBeforeUnmount(() => {
   white-space: nowrap;
 }
 
-/* —— 翻开：整本右移并缩到 0.74「后退」一档。跨页摊平后的视觉中心比书体中心偏左 66px，
-      右移 66 × 0.74 ≈ 49 才在侧栏里居中；缩完 200px 宽、左右各留 30px。
-      封面与后 3 张纸页都落在 -188° 附近，净角只剩 8°，左面才能正对观众放内容 —— */
+/* —— 翻开：照搬 demo —— 封面绕左下角扇到 -145°、右页 -30°/-35°、后三张纸页
+      -118°/-130°/-140° 扇成左页（比封面慢，先荡封面再开扇面），封底保持合上时的 -15° 不动。
+      整本右移 53px 并缩到 0.9：半开姿态左到封面内板 113px、右到封底 133px，展宽 246px，
+      视觉中心比书体中心偏左 59px，右移 59 × 0.9 ≈ 53 才在侧栏里居中；缩完 222px 宽、左右各留 19px —— */
 @media (hover: hover) and (prefers-reduced-motion: no-preference) {
   .book-stage:is(:hover, :focus-within) .book {
-    transform: translateX(49px) scale(0.74);
+    transform: translateX(53px) scale(0.9);
     /* 摊开后书离桌面更近，底影要跟着铺开一点，否则整本像贴在卡片上的纸片 */
     --book-lift: 6px 3px 30px 12px rgba(0, 0, 0, 0.2);
   }
 
   .book-stage:is(:hover, :focus-within) .hardcover_front {
-    transform: rotateY(-188deg) translateZ(0);
+    transform: rotateY(-145deg) translateZ(0);
   }
 
-  /* 封底必须跟着摊平：-15° 时它右缘 z=+28.9，比 -8° 的右页 z=+19.2 更靠前，会把右页整块盖住 */
-  .book-stage:is(:hover, :focus-within) .hardcover_back {
-    transform: rotateY(-8deg) translateZ(-7px);
-  }
-
-  /* 前两张纸页停在 -8° 组成右页，后三张跟着封面翻到左面组；
-     时长压在封面同一条 0.8s 线上，hover 时不会拖到近 2 秒才落定 */
-  .book-stage:is(:hover, :focus-within) .page li:nth-child(1) { transform: rotateY(-8deg); transition-duration: 0.7s; }
-  .book-stage:is(:hover, :focus-within) .page li:nth-child(2) { transform: rotateY(-8deg); transition-duration: 0.8s; }
-  /* li:3/4/5 多翻 0.5~1.5°，退到封面之后，避免与封面共面闪烁 */
-  .book-stage:is(:hover, :focus-within) .page li:nth-child(3) { transform: rotateY(-188.5deg); transition-duration: 0.75s; }
-  .book-stage:is(:hover, :focus-within) .page li:nth-child(4) { transform: rotateY(-189deg); transition-duration: 0.65s; }
-  .book-stage:is(:hover, :focus-within) .page li:nth-child(5) { transform: rotateY(-189.5deg); transition-duration: 0.55s; }
+  /* 右页：demo 是 -30° / -35°，只比合上时多翻几度，半开的书口才立得住 */
+  .book-stage:is(:hover, :focus-within) .page li:nth-child(1) { transform: rotateY(-30deg); transition-duration: 0.7s; }
+  .book-stage:is(:hover, :focus-within) .page li:nth-child(2) { transform: rotateY(-35deg); transition-duration: 0.8s; }
+  /* 翻过去那叠（左页）：照 demo 的 -118° / -130° / -140° **正序**分配 —— li:3 翻得最少、
+     自由边深度 z = 138·sinθ 最大，也就是扇面里离观众最近、投影最宽的那张（138·cos62° ≈ 65px），
+     带缩略图的必须是它。角度从合上时的 -32°/-34°/-36° 单调续下去，三张纸途中不会互换前后。
+     时长照 demo 比封面慢一档（0.9~1.2s，demo 是 1.2/1.4/1.6）：封面先荡过去，扇面再跟上，
+     纸页若跑得比封面快（之前 0.6~0.8s）会在封面还在立着时就把扇面摊开，看着像穿透封面 —— */
+  .book-stage:is(:hover, :focus-within) .page li:nth-child(3) { transform: rotateY(-118deg); transition-duration: 1.2s; }
+  .book-stage:is(:hover, :focus-within) .page li:nth-child(4) { transform: rotateY(-130deg); transition-duration: 1.05s; }
+  .book-stage:is(:hover, :focus-within) .page li:nth-child(5) { transform: rotateY(-140deg); transition-duration: 0.9s; }
 
   /* 书脊翻到中缝处只剩几片共面碎条，还带着 30px 的大模糊阴影，整体淡出 */
   .book-stage:is(:hover, :focus-within) .book_spine {
     opacity: 0;
   }
 
-  /* 右页内容跟着翻开动作走：起步就给（微量延迟避开合上态），纸页转到哪内容就在哪；
-     明暗晚半拍浮现，跟着摊平的节奏 */
+  /* 右页内容跟着翻开动作走：起步就给（微量延迟避开合上态），纸页转到哪内容就在哪 */
   .book-stage:is(:hover, :focus-within) .page-right img {
     opacity: 1;
     transition-delay: 0.05s;
   }
 
-  .book-stage:is(:hover, :focus-within) .leaf-shade {
-    opacity: 1;
-    transition-delay: 0.3s;
-  }
-}
-
-/* —— 摊开后的明暗：外缘压一道窄暗面当硬壳厚度，靠中缝一侧压书槽。
-      平摊等于把原来扇开的纸页贴合在一起，不加这两层就成了两张并列的纸 —— */
-.leaf-shade {
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  opacity: 0;
-  transition: opacity 0.4s ease;
-}
-
-.leaf-shade-left {
-  background:
-    linear-gradient(to right, rgba(28, 22, 10, 0.2) 0%, rgba(28, 22, 10, 0) 4%),
-    linear-gradient(to right, rgba(58, 44, 20, 0) 84%, rgba(58, 44, 20, 0.36) 100%);
-}
-
-.leaf-shade-right {
-  background:
-    linear-gradient(to left, rgba(28, 22, 10, 0.2) 0%, rgba(28, 22, 10, 0) 4%),
-    linear-gradient(to left, rgba(58, 44, 20, 0) 84%, rgba(58, 44, 20, 0.36) 100%);
+  /* 左页内容不加任何时间门控：图在纸的背面、比纸面退 0.5px，纸还没转过 90° 时被纸自己挡着，
+     转过 90° 才露出来 —— 出现在哪一刻由几何决定，与翻转同步，没有“延迟显形”这回事 —— */
 }
 
 /* —— 换书过渡：closing 淡出，entering 上浮入场 —— */
@@ -734,8 +722,7 @@ onBeforeUnmount(() => {
   .hardcover_back,
   .book_spine,
   .page > li,
-  .page-right img,
-  .leaf-shade {
+  .page-right img {
     transition: none;
   }
 
