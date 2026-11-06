@@ -10,6 +10,7 @@ import { getCoverFilePath } from './coverService'
 import { detectFormat } from './libraryService'
 import { readPage as readCbzPage } from './cbzService'
 import { readPage as readMobiPage } from './mobiService'
+import { readPage as readEpubPage } from './epubService'
 import * as logger from './logger'
 
 export const IREADER_PROTOCOL = 'ireader'
@@ -55,9 +56,11 @@ export function registerProtocolHandler(): void {
       return servePdfjsAsset(url.pathname)
     }
 
-    // cbz / mobi 逐页供给：/cbz|mobi/{bookId}/{page}；须在通用 bookId 解析前分流（通用解析对 /123/45 得 NaN）
-    if (kind === 'cbz' || kind === 'mobi') {
-      return servePagedImage(kind, url, kind === 'cbz' ? readCbzPage : readMobiPage)
+    // cbz / mobi / epubpage 逐页供给：/{kind}/{bookId}/{page}；须在通用 bookId 解析前分流（通用解析对 /123/45 得 NaN）
+    if (kind === 'cbz' || kind === 'mobi' || kind === 'epubpage') {
+      const serve = kind === 'cbz' ? readCbzPage : kind === 'mobi' ? readMobiPage : readEpubPage
+      // epubpage 是「EPUB 内页图」的子协议，书籍格式校验仍按 epub 判定
+      return servePagedImage(kind, url, serve, kind === 'epubpage' ? 'epub' : kind)
     }
 
     const bookId = Number(url.pathname.replace(/^\//, ''))
@@ -88,13 +91,15 @@ export function registerProtocolHandler(): void {
 }
 
 /**
- * 逐页图片供给（cbz / mobi 共用）：URL 形如 /{bookId}/{page}，page 为 1 基阅读页码。
- * 两个格式的单页读取函数签名一致，差异只在格式校验与错误语义文案。
+ * 逐页图片供给（cbz / mobi / epubpage 共用）：URL 形如 /{bookId}/{page}，page 为 1 基阅读页码。
+ * 三个格式的单页读取函数签名一致，差异只在格式校验与错误语义文案；
+ * expectedFormat 用于子协议（epubpage → epub）的格式闸门。
  */
 async function servePagedImage(
-  kind: 'cbz' | 'mobi',
+  kind: 'cbz' | 'mobi' | 'epubpage',
   url: URL,
-  readPage: (filePath: string, page: number) => Promise<{ data: Buffer; contentType: string } | null>
+  readPage: (filePath: string, page: number) => Promise<{ data: Buffer; contentType: string } | null>,
+  expectedFormat: string = kind
 ): Promise<Response> {
   const match = /^\/(\d+)\/(\d+)$/.exec(url.pathname)
   if (!match) {
@@ -103,7 +108,7 @@ async function servePagedImage(
   const bookId = Number(match[1])
   const page = Number(match[2])
   const row = booksRepo.findById(bookId)
-  if (!row || detectFormat(row.file_path) !== kind || !fs.existsSync(row.file_path)) {
+  if (!row || detectFormat(row.file_path) !== expectedFormat || !fs.existsSync(row.file_path)) {
     return new Response('Not Found', { status: 404 })
   }
   try {

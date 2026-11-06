@@ -89,30 +89,20 @@
       <aside class="collection-side">
         <h2 class="side-title">{{ t('library.collection.sideTitle') }}</h2>
         <div class="side-center">
-          <template v-if="sideBook">
-            <div
-              class="book-3d"
-              :title="t('library.openBook', { title: sideBook.title })"
-              @click="openBook(sideBook.id)"
-            >
-              <img
-                v-if="sideBook.coverUrl"
-                class="book-3d-cover"
-                :src="sideBook.coverUrl"
-                :alt="sideBook.title"
-              />
-              <div v-else class="book-3d-cover book-3d-placeholder">{{ t('common.noCover') }}</div>
-              <!-- 书页厚度（右 + 底），营造立体感 -->
-              <div class="book-3d-pages" aria-hidden="true" />
-            </div>
-            <p class="book-3d-name" :title="sideBook.title">{{ sideBook.title }}</p>
-          </template>
+          <ContinueReadingBook
+            v-if="sideBook"
+            :book="sideBook"
+            :phase="sidePhase"
+            @open="openBook"
+          />
           <p v-else class="side-empty">{{ t('library.collection.noBooks') }}</p>
         </div>
         <div v-if="sideBook" class="side-nav">
-          <button :disabled="sideIndex <= 0" @click="shiftSideBook(-1)">{{ t('library.collection.prev') }}</button>
+          <button :disabled="sideSwitching || sideIndex <= 0" @click="shiftSideBook(-1)">
+            {{ t('library.collection.prev') }}
+          </button>
           <button
-            :disabled="sideIndex >= collectionBooks.length - 1"
+            :disabled="sideSwitching || sideIndex >= collectionBooks.length - 1"
             @click="shiftSideBook(1)"
           >
             {{ t('library.collection.next') }}
@@ -242,6 +232,7 @@ import { coverQueueState, enqueueCovers, removeFromQueue } from '../services/cov
 import type { SelectOption } from '../services/selectMenu'
 import SelectMenu from '../components/ui/SelectMenu.vue'
 import BookCard from '../components/library/BookCard.vue'
+import ContinueReadingBook from '../components/library/ContinueReadingBook.vue'
 import CollectionCard from '../components/library/CollectionCard.vue'
 import CollectionPickerDialog from '../components/library/CollectionPickerDialog.vue'
 import AddBooksDialog from '../components/library/AddBooksDialog.vue'
@@ -251,6 +242,7 @@ import TextPromptDialog from '../components/library/TextPromptDialog.vue'
 import { appLocale, t, tp } from '../i18n'
 import { localizeError } from '../i18n/errors'
 import { compareTitles } from '../services/libraryList'
+import { SIDE_CLOSE_MS, SIDE_ENTER_MS, type SideBookPhase } from '../services/sideBookTransition'
 
 const library = useLibraryStore()
 const router = useRouter()
@@ -290,6 +282,7 @@ onMounted(() => {
 
 onUnmounted(() => {
   library.unsubscribeChanges()
+  clearSideTimers()
 })
 
 // —— 导入（主页导入到未分组；合集视图内导入直接归属当前合集） ——
@@ -456,10 +449,49 @@ const sideIndex = computed(() => sideCursor.value ?? sideDefaultIndex.value)
 
 const sideBook = computed(() => collectionBooks.value[sideIndex.value] ?? null)
 
-function shiftSideBook(delta: 1 | -1) {
+// —— 换书过渡：旧书合上下沉 → 换焦点 → 新书上浮入场（组件只消费阶段） ——
+const sidePhase = ref<SideBookPhase>('idle')
+const sideSwitching = ref(false)
+
+/** 一次性判定：与 CardTilt / StatCard / ReaderView 一致，不监听媒体变化 */
+const reducedMotion =
+  typeof window.matchMedia === 'function' &&
+  window.matchMedia('(prefers-reduced-motion: reduce)').matches
+
+/** 过渡计时器：卸载时统一清空，避免销毁后仍写 ref */
+const sideTimers = new Set<ReturnType<typeof setTimeout>>()
+
+function wait(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      sideTimers.delete(timer)
+      resolve()
+    }, ms)
+    sideTimers.add(timer)
+  })
+}
+
+function clearSideTimers(): void {
+  for (const timer of sideTimers) clearTimeout(timer)
+  sideTimers.clear()
+}
+
+async function shiftSideBook(delta: 1 | -1) {
+  if (sideSwitching.value) return // 连点合并，避免动画堆叠
   const next = sideIndex.value + delta
   if (next < 0 || next >= collectionBooks.value.length) return
+  if (reducedMotion) {
+    sideCursor.value = next
+    return
+  }
+  sideSwitching.value = true
+  sidePhase.value = 'closing'
+  await wait(SIDE_CLOSE_MS)
   sideCursor.value = next
+  sidePhase.value = 'entering'
+  await wait(SIDE_ENTER_MS)
+  sidePhase.value = 'idle'
+  sideSwitching.value = false
 }
 
 function booksInCollection(collectionId: number): Book[] {
@@ -682,123 +714,8 @@ function askDissolve() {
   justify-content: center;
 }
 
-/* 书籍立体感：封面 + 右侧/底部书页厚度 + 左书脊暗带 + 整体投影 */
-.book-3d {
-  position: relative;
-  width: 176px;
-  /* 右页厚（10px）与投影使视觉重心右偏约 5px，左移补偿让封面+页厚的合成视觉居中 */
-  margin-left: -5px;
-  cursor: pointer;
-  /* 整体投影跟随封面与页厚的合成轮廓 */
-  filter: drop-shadow(8px 12px 12px rgba(28, 28, 26, 0.3));
-  transition:
-    transform 0.18s ease,
-    filter 0.18s ease;
-}
-
-.book-3d:hover {
-  transform: translateY(-4px);
-  filter: drop-shadow(10px 18px 16px rgba(28, 28, 26, 0.36));
-}
-
-.book-3d-cover {
-  position: relative;
-  z-index: 2;
-  display: block;
-  width: 100%;
-  aspect-ratio: 3 / 4;
-  object-fit: cover;
-  border: 1px solid var(--border);
-  border-radius: 3px 5px 5px 3px;
-  /* 封底贴页缘的接触影（书脊与边缘光影由 .book-3d::before 蒙层统一绘制） */
-  box-shadow: -2px 0 4px -2px rgba(28, 28, 26, 0.25);
-}
-
-/* 封面光影蒙层：左书脊弧形暗带 + 顶部受光 + 右/底缘搭在页缘上的压影，
-   把封面与页缘粘合成一本真书（img 无法挂伪元素，故挂在 .book-3d 上覆盖封面区） */
-.book-3d::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  z-index: 3;
-  pointer-events: none;
-  border-radius: 3px 5px 5px 3px;
-  background:
-    linear-gradient(
-      to right,
-      rgba(20, 18, 14, 0.42) 0,
-      rgba(20, 18, 14, 0.18) 5px,
-      rgba(20, 18, 14, 0) 14px
-    ),
-    linear-gradient(to bottom, rgba(255, 255, 255, 0.12) 0, rgba(255, 255, 255, 0) 12px),
-    linear-gradient(to left, rgba(20, 18, 14, 0.3) 0, rgba(20, 18, 14, 0) 7px),
-    linear-gradient(to top, rgba(20, 18, 14, 0.32) 0, rgba(20, 18, 14, 0) 7px);
-}
-
-.book-3d-placeholder {
-  background: var(--placeholder);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 13px;
-  color: var(--text-muted);
-}
-
-/* 书页厚度：右侧竖页缘 + 底部横页缘。
-   固定纸张米色（书页就是纸，深浅主题下都应有纸感，主题灰会导致层次隐形）；
-   右条全高顶满封面右缘，底条斜切平行四边形从左下角铺到右条外底角，两处无缝衔接 */
-.book-3d-pages {
-  position: absolute;
-  inset: 0;
-  z-index: 1;
-  pointer-events: none;
-}
-
-.book-3d-pages::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  right: -11px;
-  width: 11px;
-  height: calc(100% + 11px);
-  /* 平行四边形：左竖边贴封面右缘，右竖边整体下移 11px（厚度向量 (11,11)），
-     底斜边与底部页缘的右斜边共享同一条棱 C→C'，两页缘才真正拼接 */
-  clip-path: polygon(0 0, 0 calc(100% - 11px), 100% 100%, 100% 11px);
-  background:
-    linear-gradient(to right, rgba(20, 18, 14, 0.16) 0, rgba(20, 18, 14, 0) 4px),
-    linear-gradient(to right, rgba(20, 18, 14, 0) 55%, rgba(20, 18, 14, 0.24) 100%),
-    repeating-linear-gradient(to bottom, #f4f1e8 0 2px, #d5cfc0 2px 3px);
-}
-
-.book-3d-pages::after {
-  content: '';
-  position: absolute;
-  left: 0;
-  bottom: -11px;
-  width: calc(100% + 11px);
-  height: 11px;
-  background: repeating-linear-gradient(
-    to right,
-    #eae6da 0 2px,
-    #c9c3b4 2px 3px
-  );
-  /* 平行四边形：上沿从封面左下角水平到封面右下角，右斜边落至右条外底角 */
-  clip-path: polygon(0 0, calc(100% - 11px) 0, 100% 100%, 11px 100%);
-  filter: brightness(0.94);
-}
-
-.book-3d-name {
-  /* 顶部留白为底部页厚让位 */
-  margin: 20px 0 0;
-  max-width: 100%;
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--text);
-  text-align: center;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
+/* 立体书的视觉与交互已迁至 components/library/ContinueReadingBook.vue
+   （3D 硬皮封面 + 内页当前阅读页缩略图），此处只保留版式容器 */
 
 .side-nav {
   display: flex;

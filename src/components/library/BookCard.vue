@@ -168,6 +168,7 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import type { Book } from '../../../shared/types'
 import { t } from '../../i18n'
 import { attachCardTilt, type CardTiltHandle } from '../../services/cardTilt'
+import { progressPercentOf } from '../../services/bookProgress'
 import type { TipAlign, TipPlacement } from '../../services/cardTip'
 import CardTip from '../ui/CardTip.vue'
 
@@ -180,14 +181,8 @@ const RENAME_LABEL = computed(() => t('library.book.rename'))
 /** × 按钮语义：合集视图传入「移出合集」，主页缺省为「从文库移除」 */
 const removeText = computed(() => props.removeLabel ?? t('library.book.remove'))
 
-const progressPercent = computed(() => {
-  const { progress, totalPages } = props.book
-  if (!progress) return null
-  // EPUB 直接存百分比；PDF 按页数折算
-  if (progress.percentage != null) return Math.min(100, Math.round(progress.percentage))
-  if (!totalPages) return null
-  return Math.min(100, Math.round((progress.page / totalPages) * 100))
-})
+/** 进度口径与侧栏内页共用 bookProgress.progressPercentOf，避免两处漂移 */
+const progressPercent = computed(() => progressPercentOf(props.book))
 
 /** 进度圆环周长（r=15.5） */
 const RING_CIRC = 2 * Math.PI * 15.5
