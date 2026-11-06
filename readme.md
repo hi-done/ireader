@@ -25,10 +25,11 @@
 
 ## ✨ 功能亮点
 
-- 📴 **纯离线** — 零网络请求（设置页手动「检查更新」为唯一例外），书籍、封面与进度全部存于本机；`ireader://` 自定义协议按 id 分发文件，不暴露本地路径
+- 📴 **纯离线** — 除设置页手动「检查更新」与你主动使用的 AI 翻译外零网络请求，书籍、封面、进度与译文全部存于本机；`ireader://` 自定义协议按 id 分发文件，不暴露本地路径
 - 📚 **多格式支持** — 导入 PDF、EPUB、CBZ / ZIP 漫画包与图片型漫画 MOBI 四种格式，共用文库、合集与断点续读；PDF 走 pdf.js canvas 渲染管线，EPUB 走 epub.js 分页排版（图片型漫画书双页并排，文字型书流式分页），CBZ / ZIP 与 MOBI 由主进程按需读取、逐页供给图片并复用 PDF 全套翻页管线；同一套阅读偏好与快捷键
 - 🌐 **三语界面** — 设置 → 通用 → 语言支持跟随系统 / 中文 / English / 日本語；切换即时生效、重启保持，日期、时长、复数与书名排序同步适配当前语言
 - 📖 **沉浸阅读** — 单页 / 双页排版，日漫（右→左）、韩漫（左→右）与条漫（上→下）三种方向：横向两向配 canvas 自绘的仿真纸张卷曲翻页动画，上→下则改为纵向连续滚动、行间固定 16px 间隙、不播翻页动画；纯黑视口贴满屏幕，顶底栏靠近边缘唤出、自动隐藏；适宽等长页支持滚轮连续滚动，贴边即翻页
+- 🪄 **AI 框选翻译** — 阅读页按 `A` 或点顶栏「AI 翻译」，拖出一个框即可把漫画对白译成中文 / 英文 / 日文；玻璃选框原地变白色译文框，字号按模型建议自动贴合气泡，可整框拖动、右下角缩放、折叠成小圆球或删除，译文按书 + 页持久化；接口支持 OpenAI 兼容与 Anthropic 兼容（可存多套模型配置并测试连接），PDF / CBZ / MOBI 与图片型 EPUB（含上→下）可用
 - 🔖 **断点续读** — 每本书独立记录页码、阅读模式、方向与缩放，重新打开即回到上次离开的位置
 - 🗂️ **合集管理** — 按系列收纳漫画，一本书同一时刻只属于一个合集；集内可直接导入，从主页模糊搜索 + 全选添加
 - 📊 **阅读统计** — 总时长、今日阅读、连续天数一览，近 7 / 30 天柱状图与书籍排行；时长自动累计，排行支持今日 / 总计切换
@@ -88,6 +89,7 @@
 | 切换阅读方向 | `R`（左→右 → 右→左 → 上→下 循环） |
 | 放大 / 缩小 | `Cmd/Ctrl+=` / `Cmd/Ctrl+-`，`Cmd/Ctrl+滚轮` |
 | 全屏 | `F` 或工具栏按钮；`Esc` 退出全屏 / 返回文库 |
+| AI 翻译选词 | `A`（再按一次或 `Esc` 退出；未启用 / 当前书不支持时底部提示） |
 
 <details>
 <summary><b>📚 完整功能清单</b></summary>
@@ -122,6 +124,17 @@
 - **MOBI 阅读**：自研零依赖解析（PalmDB 记录表 + MOBI 头 + EXTH + PalmDOC LZ77 解压），按正文图片引用顺序逐页浏览；导入即统计页数、首页自动作封面；与 CBZ 共用同一套图片页管线。当前范围仅限**图片型漫画 MOBI**，文字型（无内嵌图片）与加密 MOBI 打开时提示不支持
 - **性能保护**：滑块跨多页拖动零渲染开销（松手后并行渲染双页），作废渲染循环的迟到结果只入缓存不上屏
 
+#### AI 翻译
+
+- **入口**：设置 → 数据 → AI 功能扩展 → AI 配置；总开关、翻译语言（简体中文 / 英文 / 日文）与模型配置都在这里，关闭后阅读页按钮失活
+- **模型配置**：可保存多套（名称、接口地址、API Key、模型名、接口协议）并单选「当前使用」；协议可选 OpenAI 兼容（`/chat/completions`）或 Anthropic 兼容（`/v1/messages`），「测试连接」返回模型名与往返耗时，DeepSeek 预设一键填入草稿（不覆盖已填 Key）
+- **选词**：阅读页按 `A` 或点顶栏「AI 翻译」进入选词态，鼠标 / 触控板拖出矩形框立即翻译，框内显示转圈；选词期间工具栏抑制、`Esc` 取消；未识别到文字给出提示且不落库
+- **译文框**：玻璃选框原地变为白色译文框且尺寸不变，文字垂直居中、溢出可滚动；字号取「页显示高度 × 模型建议比例」后再按框内可用空间等比收缩
+- **框操作**：整框拖动改位置、右下角手柄改尺寸、左上角折叠为小圆球（点击恢复）、删除；顶栏下拉提供「全部隐藏 / 全部折叠 / 全部展开」
+- **持久化**：译文、归一化矩形、字号比例与折叠态按书 + 页落库，删书级联清除；切换单 / 双页、缩放与方向后自动贴回原气泡，翻页时覆盖层随页门控
+- **支持范围**：PDF、CBZ、MOBI 与图片型 EPUB 的单页 / 双页 / 上→下纵向滚动；文字型 EPUB 为流式排版、无稳定页边界，按 `A` 明确提示不支持
+- **请求**：外网请求全部集中在主进程，翻译请求 60s 超时，只在主动框选或测试连接时发出；会把框选截图与书名发到你配置的服务（译文语言、配置与译文均存本机，API Key 明文保存在本地设置）
+
 #### 阅读统计
 
 - 入口：设置 → 数据 → 阅读时间统计
@@ -143,7 +156,7 @@
 
 单本书的进度记录优先于全局默认（漫画阅读器与图片型 EPUB 阅读页顶栏的「封面单页 / 封面并排」按钮可为单本书覆盖该值）。
 
-设置页「数据」分组提供阅读统计入口；「关于」分组还提供当前版本查看与检查更新（Windows 增量更新，macOS 跳转浏览器下载）。
+设置页「数据」分组提供阅读统计与 AI 配置（AI 功能扩展）入口；「关于」分组还提供当前版本查看与检查更新（Windows 增量更新，macOS 跳转浏览器下载）。
 
 </details>
 
@@ -159,8 +172,9 @@
 | MOBI 解析 | 自研零依赖（PalmDB 记录偏移直读单条记录 + PalmDOC LZ77 解压，经 ireader://mobi/{id}/{page} 逐页供给） |
 | 数据库 | better-sqlite3 12.x（主进程内嵌 SQLite，WAL 模式） |
 | 界面语言 | 自研零依赖 i18n，三语词典类型同构；Intl 处理日期、时长与复数，Intl.Collator 排序 |
+| AI 翻译 | 主进程全局 `fetch`（60s 超时、不引入 SDK）：OpenAI 兼容 `/chat/completions` 与 Anthropic 兼容 `/v1/messages` 双协议，发送框选图 base64 + 提示词，解析译文与建议字号 |
 | 打包 | electron-builder 26（macOS DMG / Windows NSIS） |
-| 测试 | Vitest 1.x（页组划分、封面队列、CBZ 排序与尺寸、MOBI 解析内核、滚轮滚动状态机、i18n 与排序等纯逻辑，344 个用例） |
+| 测试 | Vitest 1.x（页组划分、封面队列、CBZ 排序与尺寸、MOBI 解析内核、滚轮滚动状态机、AI 提示词解析、i18n 与排序等纯逻辑，476 个用例） |
 
 ## 🧭 架构
 
@@ -173,25 +187,26 @@ Electron 双进程，前后端分离：
   EPUB：epub.js 解包 → 分页渲染（图片型书按 spine 页模型）
   CBZ / MOBI：逐页拉取图片（主进程按需解压 / 解压文本 + 直读图片记录）→ 同 PDF canvas 管线
   上→下：VerticalScrollView 行盒布局 + 窗口化挂载（canvas 自渲染，与横向共用页组表）
+  AI 翻译：页盒覆盖层（归一化矩形）→ 框选截图 → IPC → 主进程请求 → 译文按书 + 页落库
   i18n：三语词典 + Intl 格式化，locale 变更驱动全站重渲染
         ▲ IPC（contextBridge 类型安全 API，contextIsolation + sandbox）
 主进程（Node.js）
-  文库 / 合集 / 进度 / 设置服务，封面落盘，日志
+  文库 / 合集 / 进度 / 设置 / AI 服务（唯一外网出口：OpenAI / Anthropic 双协议），封面落盘，日志
   ireader:// 自定义协议（按 id 提供 PDF / EPUB / CBZ / MOBI 页面与封面，不暴露文件路径）
         ▲
   {userData}/ireader.db（SQLite WAL）+ {userData}/covers/
 ```
 
 ```
-├── electron/          # 主进程：main / preload / db(repos+迁移) / services / ipc
-├── src/               # 渲染进程：views / stores / services(pdf·epub·imagePage·cache·pageCurl·spread·verticalLayout) / components
+├── electron/          # 主进程：main / preload / db(repos+迁移) / services(含 aiService·aiProtocol·aiReply) / ipc
+├── src/               # 渲染进程：views / stores / services(pdf·epub·imagePage·cache·pageCurl·spread·verticalLayout·aiCrop·aiTranslation) / components
 ├── src/i18n/          # 三语词典、时长/日期格式化与错误码映射
 ├── shared/types.ts    # 前后端共享类型（Book / Collection / Settings / Result…）
 ├── pics/              # 界面截图
 └── build/             # 打包资源（icon 等）
 ```
 
-安全基线：渲染进程沙箱启用、`contextIsolation: true`、`nodeIntegration: false`；本地文件只能经 `ireader://pdf/{id}`、`ireader://epub/{id}`、`ireader://cbz/{id}/{page}`、`ireader://mobi/{id}/{page}`、`ireader://cover/{id}` 按 id 获取。
+安全基线：渲染进程沙箱启用、`contextIsolation: true`、`nodeIntegration: false`；本地文件只能经 `ireader://pdf/{id}`、`ireader://epub/{id}`、`ireader://cbz/{id}/{page}`、`ireader://mobi/{id}/{page}`、`ireader://cover/{id}` 按 id 获取。AI 翻译是唯一主动外发内容的功能，只把框选截图与书名发往你配置的模型服务。
 
 <details>
 <summary><b>🗄️ 数据模型（SQLite，增量迁移）</b></summary>
@@ -200,9 +215,10 @@ Electron 双进程，前后端分离：
 - `collections`：合集（id、标题、创建时间）
 - `reading_progress`：每本书一条（页码、模式、方向、缩放、cfi/percentage（EPUB 定位）、纵向双页行内页序 `row_order`，变更防抖 1s 保存，退出强制落盘）
 - `reading_stats`：阅读时长日粒度聚合（每本书每天一行，毫秒累加；删书级联清除）
+- `ai_translations`：AI 框选译文（书 id + 页码 + 归一化矩形 + 译文 + 字号比例 + 折叠态 + 创建时间；删书级联清除）
 - `settings`：key-value（JSON）
 
-迁移用 `PRAGMA user_version` 版本号 + 顺序脚本（当前 v5：合集归属、进度 cfi/percentage、阅读时长统计、纵向双页行内页序），只追加不回改。
+迁移用 `PRAGMA user_version` 版本号 + 顺序脚本（当前 v7：合集归属、进度 cfi/percentage、阅读时长统计、纵向双页行内页序、AI 译文记录、单本封面单页覆盖），只追加不回改。
 
 </details>
 

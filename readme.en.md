@@ -25,10 +25,11 @@ Import · Collections · Immersive reading · Resume where you left off — your
 
 ## ✨ Highlights
 
-- 📴 **Fully offline** — zero network requests (the manual "Check for updates" in Settings is the only exception); books, covers and progress stay on your machine. The custom `ireader://` protocol serves files by id without exposing local paths
+- 📴 **Fully offline** — zero network requests except the manual "Check for updates" in Settings and the AI translation you trigger yourself; books, covers, progress and translations stay on your machine. The custom `ireader://` protocol serves files by id without exposing local paths
 - 📚 **Multi-format** — import PDF, EPUB, CBZ / ZIP comic archives and image-based comic MOBI files, all sharing the library, collections and resume support; PDF renders through the pdf.js canvas pipeline, EPUB uses epub.js pagination (image-based manga in side-by-side spreads, text-based books flow-paginated), CBZ / ZIP and MOBI are read on demand in the main process and served page by page, reusing the entire PDF paging pipeline; one set of reading preferences and shortcuts
 - 🌐 **Trilingual UI** — Settings → General → Language offers Follow system / 中文 / English / 日本語; changes take effect instantly and persist across restarts, with dates, durations, plurals and title sorting adapting to the current language
 - 📖 **Immersive reading** — single / double-page layouts with three directions: right-to-left (manga), left-to-right (webtoon) and top-to-bottom (strip comics) — the two horizontal directions use the canvas-drawn paper-curl animation, while top-to-bottom switches to continuous vertical scrolling with a fixed 16px gap and no page-turn animation; a pure-black viewport fills the screen while top and bottom bars appear near the edges and hide automatically; fit-width long pages support continuous wheel scrolling and turn the page at the edges
+- 🪄 **AI selection translation** — press `A` in the reader (or the "AI translate" toolbar button) and drag a box around a speech bubble to translate it into Chinese / English / Japanese; the glass selection box turns into a white translation box in place, sized to the bubble from the model's suggested font ratio, and can be dragged, resized from the bottom-right corner, collapsed into a small pill or deleted; translations persist per book and page; both OpenAI-compatible and Anthropic-compatible endpoints are supported (several saved model profiles with a connection test), and it works for PDF / CBZ / MOBI and image-based EPUB (including top→bottom)
 - 🔖 **Resume anywhere** — every book independently records its page, reading mode, direction and zoom, so reopening returns to where you left off
 - 🗂️ **Collections** — organize manga by series; a book belongs to exactly one collection at a time; import straight into a collection, or fuzzy-search from the home page and select all
 - 📊 **Reading stats** — total time, today's reading and streak at a glance, with 7 / 30-day bar charts and a book ranking; time is tracked automatically and the ranking switches between today / all time
@@ -88,6 +89,7 @@ Get the installer for your platform from the [**Releases**](../../releases) page
 | Toggle reading direction | `R` (left→right → right→left → top→bottom) |
 | Zoom in / out | `Cmd/Ctrl+=` / `Cmd/Ctrl+-`, `Cmd/Ctrl+Wheel` |
 | Fullscreen | `F` or the toolbar button; `Esc` exits fullscreen / returns to the library |
+| AI translation selection | `A` (press again or `Esc` to exit; a hint appears at the bottom when disabled or unsupported) |
 
 <details>
 <summary><b>📚 Full feature list</b></summary>
@@ -122,6 +124,17 @@ Get the installer for your platform from the [**Releases**](../../releases) page
 - **MOBI reading**: a self-contained zero-dependency parser (PalmDB record table + MOBI header + EXTH + PalmDOC LZ77 decompression) browses pages in the order the text references them; page count is known on import and the first page becomes the cover; shares the same image-page pipeline as CBZ. The scope is limited to **image-based comic MOBI** — text-only and encrypted MOBI files report that they are unsupported when opened
 - **Performance guards**: dragging the slider across many pages costs no rendering (both pages render in parallel on release); late results from invalidated render loops are cached but never blitted
 
+#### AI translation
+
+- **Entry**: Settings → Data → AI extensions → AI configuration; the master switch, target language (Simplified Chinese / English / Japanese) and model profiles live here, and turning it off disables the reader button
+- **Model profiles**: save several profiles (name, endpoint, API key, model, protocol) and pick the active one; the protocol can be OpenAI-compatible (`/chat/completions`) or Anthropic-compatible (`/v1/messages`), "Test connection" reports the model name and round-trip time, and a DeepSeek preset fills the draft without overwriting your API key
+- **Selecting**: press `A` or click "AI translate" in the top bar to enter selection mode, then drag a rectangle with the mouse / trackpad to translate immediately while a spinner shows in the box; toolbars are suppressed during selection, `Esc` cancels, and no text detected shows a hint without saving
+- **Translation box**: the glass box turns into a white translation box of the same size with vertically centered text that scrolls when it overflows; the font size is the page display height × the model's suggested ratio, then shrunk proportionally to fit the space inside the box
+- **Box actions**: drag the whole box to move it, resize it from the bottom-right handle, collapse it into a small pill (click to restore) or delete it; the toolbar dropdown offers "Hide all / Collapse all / Expand all"
+- **Persistence**: text, normalized rectangle, font ratio and collapsed state are stored per book and page and removed with the book; boxes stay glued to their bubbles after switching single / double page, zoom or direction, and the overlay is gated with the page while turning
+- **Scope**: PDF, CBZ, MOBI and image-based EPUB in single / double page and top→bottom scrolling; reflowable text EPUB has no stable page boundary, so pressing `A` explicitly reports that it is unsupported
+- **Requests**: all outbound requests are made in the main process, translation requests time out after 60s, and they are only sent when you drag a box or test a connection; the selected image and book title are sent to the service you configured (target language, profiles and translations stay on this machine, and the API key is stored in plain text in the local settings)
+
 #### Reading stats
 
 - Entry: Settings → Data → Reading statistics
@@ -143,7 +156,7 @@ Get the installer for your platform from the [**Releases**](../../releases) page
 
 A per-book progress record overrides the global defaults (the "Cover solo / Cover paired" button in the comic and image-based EPUB reader toolbar overrides it for a single book).
 
-The Data group in Settings provides the reading statistics entry; the About group shows the current version and checks for updates (incremental updates on Windows, browser download on macOS).
+The Data group in Settings provides the reading statistics and AI configuration (AI extensions) entries; the About group shows the current version and checks for updates (incremental updates on Windows, browser download on macOS).
 
 </details>
 
@@ -159,8 +172,9 @@ The Data group in Settings provides the reading statistics entry; the About grou
 | MOBI parsing | Self-contained, zero dependencies (reads a single record straight from the PalmDB offset table, PalmDOC LZ77 decompression, served per page via ireader://mobi/{id}/{page}) |
 | Database | better-sqlite3 12.x (embedded SQLite in the main process, WAL mode) |
 | UI language | Self-built zero-dependency i18n with type-isomorphic dictionaries; Intl for dates, durations and plurals, Intl.Collator for sorting |
+| AI translation | Global `fetch` in the main process (60s timeout, no SDK dependency): dual protocol support for OpenAI-compatible `/chat/completions` and Anthropic-compatible `/v1/messages`, sending the cropped image as base64 plus the prompt and parsing the text and suggested font ratio |
 | Packaging | electron-builder 26 (macOS DMG / Windows NSIS) |
-| Testing | Vitest 1.x (pure logic: spread building, cover queue, CBZ ordering and sizing, the MOBI parser core, wheel-scroll state machine, i18n and sorting — 344 cases) |
+| Testing | Vitest 1.x (pure logic: spread building, cover queue, CBZ ordering and sizing, the MOBI parser core, wheel-scroll state machine, AI reply parsing, i18n and sorting — 476 cases) |
 
 ## 🧭 Architecture
 
@@ -173,25 +187,26 @@ Renderer (Vue 3 SPA)
   EPUB: epub.js unpack → paginated rendering (spine page model for image-based books)
   CBZ / MOBI: fetch images page by page (unpacked on demand / text decompressed + image records read directly in main) → same canvas pipeline as PDF
   Top→bottom: VerticalScrollView row-box layout with windowed mounting (canvas rendering, sharing the spread table with horizontal mode)
+  AI translation: page-box overlay (normalized rectangles) → cropped image → IPC → main-process request → translations stored per book + page
   i18n: trilingual dictionaries + Intl formatting; locale changes re-render the whole UI
         ▲ IPC (type-safe contextBridge API, contextIsolation + sandbox)
 Main process (Node.js)
-  Library / collections / progress / settings services, cover files, logging
+  Library / collections / progress / settings / AI service (the only outbound network path: OpenAI / Anthropic protocols), cover files, logging
   ireader:// custom protocol (serves PDF / EPUB / CBZ / MOBI pages and covers by id, never exposing file paths)
         ▲
   {userData}/ireader.db (SQLite WAL) + {userData}/covers/
 ```
 
 ```
-├── electron/          # Main process: main / preload / db (repos + migrations) / services / ipc
-├── src/               # Renderer: views / stores / services (pdf·epub·imagePage·cache·pageCurl·spread·verticalLayout) / components
+├── electron/          # Main process: main / preload / db (repos + migrations) / services (incl. aiService·aiProtocol·aiReply) / ipc
+├── src/               # Renderer: views / stores / services (pdf·epub·imagePage·cache·pageCurl·spread·verticalLayout·aiCrop·aiTranslation) / components
 ├── src/i18n/          # Trilingual dictionaries, duration/date formatting and error-code mapping
 ├── shared/types.ts    # Shared types (Book / Collection / Settings / Result…)
 ├── pics/              # UI screenshots
 └── build/             # Packaging assets (icons, etc.)
 ```
 
-Security baseline: the renderer is sandboxed with `contextIsolation: true` and `nodeIntegration: false`; local files are only reachable by id through `ireader://pdf/{id}`, `ireader://epub/{id}`, `ireader://cbz/{id}/{page}`, `ireader://mobi/{id}/{page}` and `ireader://cover/{id}`.
+Security baseline: the renderer is sandboxed with `contextIsolation: true` and `nodeIntegration: false`; local files are only reachable by id through `ireader://pdf/{id}`, `ireader://epub/{id}`, `ireader://cbz/{id}/{page}`, `ireader://mobi/{id}/{page}` and `ireader://cover/{id}`. AI translation is the only feature that sends content out, and it only sends the selected image and book title to the model service you configured.
 
 <details>
 <summary><b>🗄️ Data model (SQLite, incremental migrations)</b></summary>
@@ -200,9 +215,10 @@ Security baseline: the renderer is sandboxed with `contextIsolation: true` and `
 - `collections`: collections (id, title, created time)
 - `reading_progress`: one row per book (page, mode, direction, zoom, cfi/percentage for EPUB locations, `row_order` for the page order inside vertical rows), saved with a 1s debounce and flushed on exit
 - `reading_stats`: daily reading-time aggregation (one row per book per day, ms accumulated; deleted with the book)
+- `ai_translations`: AI selection translations (book id + page + normalized rectangle + text + font ratio + collapsed state + created time; deleted with the book)
 - `settings`: key-value (JSON)
 
-Migrations use the `PRAGMA user_version` number plus sequential scripts (currently v5: collection ownership, progress cfi/percentage, reading time stats, vertical row order); scripts are append-only.
+Migrations use the `PRAGMA user_version` number plus sequential scripts (currently v7: collection ownership, progress cfi/percentage, reading time stats, vertical row order, AI translation records, per-book cover-solo override); scripts are append-only.
 
 </details>
 
