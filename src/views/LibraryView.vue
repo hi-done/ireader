@@ -804,7 +804,7 @@ function askDissolve() {
 
 .search-input {
   flex: 1;
-  max-width: 420px;
+  max-width: 280px;
 }
 
 .toolbar-group {
