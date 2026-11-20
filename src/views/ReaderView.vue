@@ -135,6 +135,9 @@
       </template>
     </div>
 
+    <!-- DEV 诊断面板：Ctrl+Alt+Shift+D 采样后显示（正式构建不渲染；同一份文本已写入主进程日志） -->
+    <pre v-if="isDev && sharpnessReport" class="debug-panel">{{ sharpnessReport }}</pre>
+
     <footer class="bottom-bar" :class="{ visible: barsVisible }">
       <span class="page-indicator">{{ currentPageLabel }} / {{ reader.numPages }}</span>
       <button
@@ -229,6 +232,16 @@ import {
   toggleFullscreen,
 } from '../services/fullscreen'
 import { resolveReaderEsc } from '../services/readerEsc'
+import { ipc } from '../services/ipc'
+import {
+  dprKey,
+  forceRepaint,
+  renderTargetSize,
+  SHARPNESS_FIX,
+  watchDevicePixelRatio,
+} from '../services/renderGeometry'
+import { sampleReaderSharpness } from '../services/sharpnessProbe'
+import { runPixelProbe, styleVariant, type PixelVariant } from '../services/pixelProbe'
 
 const route = useRoute()
 const router = useRouter()
@@ -236,6 +249,14 @@ const reader = useReaderStore()
 const library = useLibraryStore()
 const settingsStore = useSettingsStore()
 const ai = useAiTranslationStore()
+
+/** DEV 构建标记：清晰度诊断面板只在开发模式渲染（正式构建只写主进程日志） */
+const isDev = import.meta.env?.DEV === true
+/** 最近一次清晰度采样文本（DEV 面板展示，30s 后自动隐藏） */
+const sharpnessReport = ref('')
+let sharpnessReportTimer: ReturnType<typeof setTimeout> | null = null
+/** 像素比对进行中：比对要多次截图，期间忽略重复触发 */
+let pixelProbeBusy = false
 
 /** 当前路由书 id（NaN 表示无有效参数，仅在 reader 路由下有意义） */
 const routeBookId = computed(() => Number(route.params.bookId))
@@ -570,6 +591,10 @@ onMounted(async () => {
   // 键盘监听挂 window：绑在 div 上的 keydown 需要焦点，页面刚打开时焦点在 body ，会导致按键全部失效
   window.addEventListener('keydown', onKeydown)
   window.addEventListener('resize', onResize)
+  // dpr 变化（换显示器 / 改系统缩放）不保证触发 resize：单独监听，命中后走同一条重渲管线
+  stopDprWatch = watchDevicePixelRatio(() => {
+    if (!isEpub.value) void rerenderAfterGeometryChange()
+  })
   // 阅读计时从进入阅读页开始（PDF/EPUB 共用此路由视图，仅此一处埋点防双计）
   startTracking(routeBookId.value)
   if (!settingsStore.loaded) await settingsStore.load()
@@ -658,6 +683,9 @@ function openBook(id: number) {
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', onKeydown)
   window.removeEventListener('resize', onResize)
+  stopDprWatch?.()
+  stopDprWatch = null
+  if (sharpnessReportTimer) clearTimeout(sharpnessReportTimer)
   if (hideTimer) clearTimeout(hideTimer)
   bookReady = false
   shown = null
@@ -1026,8 +1054,12 @@ function setCanvasRef(i: number, el: unknown) {
 /** 当前缩放模式下的渲染目标尺寸（original 返回空对象即 100%）。
  *  不留边距：适高填满视口高度，适宽填满视口宽度，页面贴边 100% 显示 */
 function zoomRenderOptions(): Pick<RenderPageOptions, 'targetWidth' | 'targetHeight'> {
-  const vw = window.innerWidth
-  const vh = window.innerHeight
+  // 渲染目标取容器实测尺寸：容器视口与窗口视口是两个尺寸真相，全屏切换瞬间必然错位
+  const viewport = SHARPNESS_FIX.containerSize
+    ? renderTargetSize(pageAreaEl.value)
+    : { width: window.innerWidth, height: window.innerHeight }
+  const vw = viewport.width
+  const vh = viewport.height
   switch (reader.zoomMode) {
     case 'fitWidth':
       // 双页取两页合并宽度平分给每页（对页紧贴，无间隙补偿）
@@ -1054,9 +1086,12 @@ let slideDir: 'forward' | 'back' | null = null
 let slideFromViewport = false
 
 /** 缓存签名：视口/模式/缩放任一变化都会使旧位图自然失效。
- *  v2 前缀：渲染尺寸去掉 MARGIN 边距后与旧位图不兼容，前缀变更使旧缓存整体失效 */
+ *  v3 前缀：签名纳入容器实测尺寸与 dpr（v2 只含窗口视口，dpr 变化时会命中旧分辨率的位图） */
 function cacheSignature(): string {
-  return `v2:${window.innerWidth}x${window.innerHeight}:${reader.mode}:${reader.zoomMode}:${reader.zoomScale}`
+  const viewport = SHARPNESS_FIX.containerSize
+    ? renderTargetSize(pageAreaEl.value)
+    : { width: window.innerWidth, height: window.innerHeight }
+  return `v3:${viewport.width}x${viewport.height}@${dprKey()}:${reader.mode}:${reader.zoomMode}:${reader.zoomScale}`
 }
 
 /** 将已渲染好的位图同步贴到显示 canvas；贴图时重播短淡入，柔和化慢路径渲染的突现感。
@@ -1139,6 +1174,85 @@ async function renderCurrentSpread(options: { fade?: boolean } = {}): Promise<bo
     () => undefined
   )
   return job
+}
+
+/**
+ * 几何口径变化（视口尺寸 / dpr / 全屏态）后的统一重渲：
+ * 清翻页会话 → 等两帧让布局落定 → 按实测尺寸重渲当前页组。
+ * 纵向无显示 canvas，由 VerticalScrollView 的 ResizeObserver 重排，这里只补一次滚动定位。
+ */
+async function rerenderAfterGeometryChange(): Promise<void> {
+  cancelTurnCurl()
+  cancelPrefetch()
+  clearBurstSession()
+  await doubleRaf()
+  if (isVertical.value) {
+    const page = reader.spreads[reader.currentIndex]?.firstPage
+    if (page != null) verticalRef.value?.scrollToPage(page)
+    return
+  }
+  holdAiOverlay()
+  try {
+    await renderCurrentSpread()
+  } finally {
+    releaseAiOverlay()
+  }
+}
+
+function showSharpnessReport(text: string): void {
+  if (!isDev) return
+  sharpnessReport.value = text
+  if (sharpnessReportTimer) clearTimeout(sharpnessReportTimer)
+  sharpnessReportTimer = setTimeout(() => (sharpnessReport.value = ''), 30000)
+}
+
+/** 像素比对的对照变体：首项为当前状态，其后每项多关掉一处可能让上屏重采样的环节 */
+function pixelVariants(): PixelVariant[] {
+  const content = pageContentEl.value
+  const area = pageAreaEl.value
+  const overlays = Array.from(
+    rootEl.value?.querySelectorAll<HTMLElement>('.ai-layer, .hotzone') ?? []
+  )
+  return [
+    styleVariant('now', []),
+    styleVariant('noSnap', [[content, 'transform', 'none']]),
+    styleVariant('noScroll', [
+      [content, 'transform', 'none'],
+      [area, 'overflow', 'hidden'],
+    ]),
+    styleVariant('bare', [
+      [content, 'transform', 'none'],
+      [area, 'overflow', 'hidden'],
+      ...overlays.map((el): [HTMLElement, string, string] => [el, 'display', 'none']),
+    ]),
+  ]
+}
+
+/** 采样当前画面并上报（诊断入口：视图只取容器与对照变体，判定与上报在 sharpnessProbe / pixelProbe） */
+async function sampleSharpnessNow(): Promise<void> {
+  const report = sampleReaderSharpness({
+    container: pageAreaEl.value,
+    zoomMode: isVertical.value ? 'vertical' : reader.zoomMode,
+    doublePage: reader.mode === 'double',
+    zoomScale: reader.zoomScale,
+  })
+  if (!report) return
+  showSharpnessReport(report)
+  // 几何读数只证明尺寸与落位合格；上屏是否被重采样要拿合成输出与位图逐像素对照
+  const canvas = canvasEls.value.find(
+    (c): c is HTMLCanvasElement => !!c && c.isConnected && c.width > 0
+  )
+  if (!canvas || pixelProbeBusy) return
+  pixelProbeBusy = true
+  try {
+    // 面板自身会盖住页面：截图前先收起，比对完连同结果一起展示
+    sharpnessReport.value = ''
+    await nextTick()
+    const pixels = await runPixelProbe(canvas, pixelVariants())
+    showSharpnessReport(`${report}\n${pixels}`)
+  } finally {
+    pixelProbeBusy = false
+  }
 }
 
 /** 取消在飞预取（含已提交到 pdf.js 的渲染）：连翻时主线程只服务当前页 */
@@ -1525,6 +1639,8 @@ function onMouseUp() {
 }
 
 let resizeTimer: ReturnType<typeof setTimeout> | null = null
+/** dpr 监听解绑函数（换显示器 / 改系统缩放时重渲） */
+let stopDprWatch: (() => void) | null = null
 function onResize() {
   // 纵向由 VerticalScrollView 的 ResizeObserver 自行重排重渲；EPUB 尺寸由 EpubReaderView 自己处理
   if (isVertical.value || isEpub.value) return
@@ -1539,6 +1655,20 @@ function onResize() {
     void renderCurrentSpread().finally(() => releaseAiOverlay())
   }, 200)
 }
+
+/**
+ * 全屏切换后修复画面：先请主进程复位页面缩放（消除整层被缩放），
+ * 再按新尺寸重渲当前页组。EPUB 由 EpubReaderView 自己处理。
+ */
+watch(isFullscreen, async () => {
+  if (isEpub.value) return
+  if (SHARPNESS_FIX.fullscreenRepaint) {
+    await doubleRaf() // 等窗口合成器把新尺寸提交给渲染进程
+    void ipc.window.resetPageScale().catch(() => undefined)
+    if (SHARPNESS_FIX.layerRebuild) forceRepaint(pageAreaEl.value)
+  }
+  await rerenderAfterGeometryChange()
+})
 
 /** 表单控件（底栏滑块等）聚焦时仍需让给控件的按键；其余快捷键照常生效 */
 const FORM_NAV_KEYS = new Set([
@@ -1565,6 +1695,12 @@ function onKeydown(e: KeyboardEvent) {
     target.tagName === 'INPUT' || target.tagName === 'SELECT' || target.tagName === 'TEXTAREA'
   if (inField && FORM_NAV_KEYS.has(e.key)) {
     return // 滑块等控件聚焦时让方向键留给控件自身
+  }
+  // 清晰度采样：Ctrl+Alt+Shift+D（生产可用；DEV 下面板展示，正式构建只写主进程日志）
+  if (e.ctrlKey && e.altKey && e.shiftKey && (e.key === 'D' || e.key === 'd')) {
+    e.preventDefault()
+    void sampleSharpnessNow()
+    return
   }
   // 上→下：上下键 / 翻页键滚动一行，绝不进入翻页动画管线
   if (isVertical.value) {

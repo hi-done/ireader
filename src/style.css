@@ -181,6 +181,23 @@ body {
   height: 100%;
 }
 
+/* DEV 诊断面板（PDF / EPUB 阅读页共用）：固定右下角，只读不拦指针 */
+.debug-panel {
+  position: fixed;
+  right: 8px;
+  bottom: 8px;
+  z-index: 9999;
+  max-width: 640px;
+  margin: 0;
+  padding: 6px 8px;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.72);
+  color: #7fdbca;
+  font: 11px/1.5 Consolas, monospace;
+  pointer-events: none;
+  white-space: pre-wrap;
+}
+
 /* —— 排版：层级明确、字重不细弱 —— */
 h1,
 h2,

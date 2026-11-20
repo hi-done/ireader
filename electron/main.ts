@@ -58,6 +58,21 @@ function createWindow() {
   // 页面的 <title> 更新会覆盖窗口标题，阻止它以保证标题始终为「IReader v版本号」
   win.on('page-title-updated', (e) => e.preventDefault())
 
+  // 锁死视觉缩放（捏合 / 触摸板双指）：页面被二次缩放后整层会重采样发虚，
+  // 阅读画面的缩放只应由应用自身的缩放档位控制（见清晰度修复设计方案 §5.2）
+  void win.webContents.setVisualZoomLevelLimits(1, 1).catch(() => undefined)
+
+  // 开发模式补 DevTools 入口：Windows 上默认菜单被移除（View → Toggle Developer Tools 随之消失），
+  // 菜单快捷键一并失效，这里补 F12 与 Ctrl+Shift+I；打包版不注册
+  if (VITE_DEV_SERVER_URL) {
+    win.webContents.on('before-input-event', (_e, input) => {
+      if (input.type !== 'keyDown') return
+      const toggle =
+        input.key === 'F12' || (input.control && input.shift && input.key.toLowerCase() === 'i')
+      if (toggle) win?.webContents.toggleDevTools()
+    })
+  }
+
   // 全屏状态唯一来源：窗口原生全屏变化（应用主动切换 / macOS 红绿灯 / 系统级）一律回传渲染层
   const relayFullscreen = (fullscreen: boolean): void => {
     const payload: WindowFullscreenState = { fullscreen }

@@ -104,6 +104,8 @@ export const ipc = {
     onFullscreenChanged: (listener: Parameters<typeof window.ireader.window.onFullscreenChanged>[0]) =>
       api().window.onFullscreenChanged(listener),
     captureRegion: (rect: CaptureRegionRect) => unwrap(api().window.captureRegion(rect)),
+    // 清晰度兜底：全屏切换后复位页面缩放 + 请求整幅重绘（失败静默，不阻断阅读）
+    resetPageScale: () => unwrap(api().window.resetPageScale()),
   },
   shell: {
     showInFolder: (path: string) => unwrap(api().shell.showInFolder(path)),

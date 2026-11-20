@@ -366,6 +366,21 @@ export function registerIpcHandlers(getWin: () => BrowserWindow | null): void {
     wrap(() => getWin()?.isFullScreen() ?? false)
   )
 
+  // 页面缩放复位（清晰度兜底）：全屏切换后浏览器可能残留视觉缩放与旧尺寸栅格，
+  // 表现为整页内容被缩放后发虚。三步均为幂等操作，失败不影响阅读。
+  ipcMain.handle(
+    'window:resetPageScale',
+    wrap(() => {
+      const win = getWin()
+      if (!win || win.webContents.isDestroyed()) return
+      const contents = win.webContents
+      contents.setZoomFactor(1)
+      void contents.setVisualZoomLevelLimits(1, 1).catch(() => undefined)
+      contents.invalidate() // 请求整幅重绘：丢弃按旧尺寸栅格化的中间结果
+      logger.info(`[window] resetPageScale zoom=${contents.getZoomFactor()}`)
+    })
+  )
+
   ipcMain.handle(
     'window:captureRegion',
     wrapAsync(async (rect: CaptureRegionRect) => {

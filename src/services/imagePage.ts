@@ -2,6 +2,7 @@
 // 对应设计文档《CBZ漫画格式支持设计方案》§4.3 / §8.1 与 specs/MOBI漫画格式支持设计方案-20261025.md §8.1
 
 import { t } from '../i18n'
+import { currentDpr, fitRenderBox, SHARPNESS_FIX } from './renderGeometry'
 import type { RenderPageOptions } from './pdf'
 
 /** 逐页图片供给的格式：主进程 ireader:// 按此 host 分流并校验书籍格式 */
@@ -19,13 +20,23 @@ interface ImagePageSize {
   pixelHeight: number
 }
 
-/** 计算目标绘制尺寸（口径与 pdf.ts 一致：适宽精确等于目标宽、适高精确等于目标高、缺省为原图 CSS 1:1） */
+/** 计算目标绘制尺寸（口径与 pdf.ts 同源：统一走 renderGeometry.fitRenderBox） */
 export function computeImagePageSize(
   naturalWidth: number,
   naturalHeight: number,
   options: Pick<RenderPageOptions, 'targetWidth' | 'targetHeight'>,
   dpr: number
 ): ImagePageSize {
+  // 像素对齐开：先定整数后备像素再反推 CSS；关：旧口径（先 CSS 再乘 dpr），仅供 DEV 二分对照
+  if (SHARPNESS_FIX.pixelAlign) {
+    const box = fitRenderBox(naturalWidth, naturalHeight, options, dpr)
+    return {
+      cssWidth: box.cssWidth,
+      cssHeight: box.cssHeight,
+      pixelWidth: box.pixelWidth,
+      pixelHeight: box.pixelHeight,
+    }
+  }
   let scale = 1
   if (options.targetWidth) scale = options.targetWidth / naturalWidth
   else if (options.targetHeight) scale = options.targetHeight / naturalHeight
@@ -82,7 +93,7 @@ async function doRenderImagePage(
   const bitmap = await createImageBitmap(blob)
   try {
     if (entry.cancelled) return
-    const dpr = window.devicePixelRatio || 1
+    const dpr = currentDpr()
     const { cssWidth, cssHeight, pixelWidth, pixelHeight } = computeImagePageSize(
       bitmap.width,
       bitmap.height,

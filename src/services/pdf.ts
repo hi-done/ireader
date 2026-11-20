@@ -4,6 +4,7 @@
 // 锁定 pdfjs-dist v4.x：v6 要求 Chromium ≥ 126（URL.parse 等），Electron 30 内置 Chromium 124 不兼容
 import * as pdfjsLib from 'pdfjs-dist'
 import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
+import { currentDpr, fitRenderBox, SHARPNESS_FIX } from './renderGeometry'
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerUrl
 
@@ -133,6 +134,27 @@ export function cancelPdfRender(canvas: HTMLCanvasElement): void {
   entry.task?.cancel()
 }
 
+/**
+ * 画布尺寸（以整数后备像素为基准）：
+ * 像素对齐开 → fitRenderBox 先定整数像素再反推 CSS，保证「后备 : 显示 : dpr」严格为 1；
+ * 关 → 旧口径（先按 CSS 目标算 scale 再乘 dpr），仅供 DEV 下二分对照用。
+ */
+function resolveCanvasSize(
+  baseWidth: number,
+  baseHeight: number,
+  options: RenderPageOptions,
+  dpr: number
+): { pixelWidth: number; cssWidth: number } {
+  if (SHARPNESS_FIX.pixelAlign) {
+    const box = fitRenderBox(baseWidth, baseHeight, options, dpr)
+    return { pixelWidth: box.pixelWidth, cssWidth: box.cssWidth }
+  }
+  let scale = 1
+  if (options.targetWidth) scale = options.targetWidth / baseWidth
+  else if (options.targetHeight) scale = options.targetHeight / baseHeight
+  return { pixelWidth: Math.max(1, Math.round(baseWidth * scale * dpr)), cssWidth: baseWidth * scale }
+}
+
 async function doRenderPage(
   doc: PdfDocument,
   pageNumber: number,
@@ -143,17 +165,15 @@ async function doRenderPage(
   if (entry.cancelled) return
   const baseViewport = page.getViewport({ scale: 1 })
 
-  const dpr = window.devicePixelRatio || 1
-  let scale = 1
-  if (options.targetWidth) scale = options.targetWidth / baseViewport.width
-  else if (options.targetHeight) scale = options.targetHeight / baseViewport.height
-
-  const viewport = page.getViewport({ scale: scale * dpr })
+  const dpr = currentDpr()
+  const size = resolveCanvasSize(baseViewport.width, baseViewport.height, options, dpr)
+  const viewport = page.getViewport({ scale: size.pixelWidth / baseViewport.width })
   const canvas = options.canvas
-  canvas.width = viewport.width
-  canvas.height = viewport.height
-  canvas.style.width = `${viewport.width / dpr}px`
-  canvas.style.height = `${viewport.height / dpr}px`
+  canvas.width = size.pixelWidth
+  canvas.height = Math.round(viewport.height)
+  // CSS 尺寸一律由整数像素除以 dpr 得出（不再独立取整），显示时不会被重采样
+  canvas.style.width = `${size.cssWidth}px`
+  canvas.style.height = `${canvas.height / dpr}px`
 
   const context = canvas.getContext('2d')
   if (!context) throw new Error('Canvas 2D context unavailable')

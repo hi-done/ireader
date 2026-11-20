@@ -33,6 +33,17 @@ describe('computeImagePageSize', () => {
     expect(tiny.pixelWidth).toBeGreaterThanOrEqual(1)
     expect(tiny.pixelHeight).toBeGreaterThanOrEqual(1)
   })
+
+  // 像素对齐口径：后备像素与 CSS 尺寸之比必须严格等于 dpr，否则浏览器会整张重采样
+  it('小数 DPR：pixel / css 之比严格等于 dpr（无取整重采样）', () => {
+    for (const dpr of [1.25, 1.5, 1.75]) {
+      for (const options of [{ targetWidth: 1279 }, { targetHeight: 769 }, {}]) {
+        const size = computeImagePageSize(1000, 2000, options, dpr)
+        expect(size.pixelWidth / size.cssWidth).toBeCloseTo(dpr, 9)
+        expect(size.pixelHeight / size.cssHeight).toBeCloseTo(dpr, 9)
+      }
+    }
+  })
 })
 
 describe('imagePageUrl', () => {

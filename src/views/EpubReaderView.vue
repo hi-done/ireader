@@ -248,6 +248,9 @@ import type { VerticalPageSource, VerticalSizing } from '../services/verticalLay
 import { normalizeWheelDelta } from '../services/wheelScroll'
 import { exitFullscreen, exitedFullscreenRecently, isFullscreen, toggleFullscreen } from '../services/fullscreen'
 import { resolveReaderEsc } from '../services/readerEsc'
+import { ipc } from '../services/ipc'
+import { forceRepaint, SHARPNESS_FIX } from '../services/renderGeometry'
+import { getSharpnessDiag, sampleReaderSharpness } from '../services/sharpnessProbe'
 
 const isDev = import.meta.env?.DEV === true
 
@@ -526,7 +529,7 @@ onMounted(() => {
   if (isDev) {
     diagTimer = setInterval(() => {
       // 封面策略日志（[cover]/open 行）在前，需全部显示，仅截掉过多的通用渲染日志
-      diagLines.value = getEpubDiag().join('\n')
+      diagLines.value = [...getEpubDiag(), ...getSharpnessDiag()].join('\n')
     }, 400)
   }
   void openBook(props.bookId)
@@ -1566,23 +1569,40 @@ function onMouseMove(e: MouseEvent) {
 }
 
 let resizeTimer: ReturnType<typeof setTimeout> | null = null
+
+/** 按实测容器尺寸重排分页（resize 防抖后与全屏切换后共用） */
+function applyViewportResize(): void {
+  // 尺寸变化令进行中的翻页编排失效（截图/冻结帧按旧尺寸）：作废队列消费并揭除冻结帧
+  openSeq++
+  pendingDelta = 0
+  pendingJump = null
+  clearBurstSession()
+  discardTurn()
+  navIndex = store.current?.index ?? null
+  const area = epubAreaEl.value
+  if (!area) return
+  const rect = area.getBoundingClientRect()
+  store.resize(rect.width, rect.height)
+}
+
 function onResize() {
   if (resizeTimer) clearTimeout(resizeTimer)
   // 防抖后按新视口重排分页
-  resizeTimer = setTimeout(() => {
-    // 尺寸变化令进行中的翻页编排失效（截图/冻结帧按旧尺寸）：作废队列消费并揭除冻结帧
-    openSeq++
-    pendingDelta = 0
-    pendingJump = null
-    clearBurstSession()
-    discardTurn()
-    navIndex = store.current?.index ?? null
-    if (epubAreaEl.value) {
-      const rect = epubAreaEl.value.getBoundingClientRect()
-      store.resize(rect.width, rect.height)
-    }
-  }, 200)
+  resizeTimer = setTimeout(applyViewportResize, 200)
 }
+
+/**
+ * 全屏切换后修复画面：请主进程复位页面缩放（消除整层被缩放），再按实测尺寸重建视图。
+ * 与 PDF 阅读器同一套口径，见清晰度修复设计方案 §7.3。
+ */
+watch(isFullscreen, async () => {
+  if (SHARPNESS_FIX.fullscreenRepaint) {
+    await doubleRaf() // 等窗口合成器把新尺寸提交给渲染进程
+    void ipc.window.resetPageScale().catch(() => undefined)
+    if (SHARPNESS_FIX.layerRebuild) forceRepaint(epubAreaEl.value)
+  }
+  applyViewportResize()
+})
 
 /** 表单控件（底栏滑块等）聚焦时仍需让给控件的按键；其余快捷键照常生效 */
 const FORM_NAV_KEYS = new Set([
@@ -1609,9 +1629,20 @@ function onKeydown(e: KeyboardEvent) {
   if (inField && FORM_NAV_KEYS.has(e.key)) {
     return
   }
-  if (e.ctrlKey && e.shiftKey && (e.key === 'D' || e.key === 'd')) {
+  // 面板开关必须排除 Alt：Ctrl+Alt+Shift+D 是清晰度采样，否则会被这里先吃掉
+  if (e.ctrlKey && e.shiftKey && !e.altKey && (e.key === 'D' || e.key === 'd')) {
     e.preventDefault()
     showDiag.value = !showDiag.value
+    return
+  }
+  // 清晰度采样：Ctrl+Alt+Shift+D（生产可用；结果写主进程日志，DEV 下追加到诊断面板）
+  if (e.ctrlKey && e.altKey && e.shiftKey && (e.key === 'D' || e.key === 'd')) {
+    e.preventDefault()
+    sampleReaderSharpness({
+      container: epubAreaEl.value,
+      zoomMode: isImageLayout.value ? 'epub-image' : 'epub-text',
+      doublePage: store.spread === 'always',
+    })
     return
   }
   switch (e.key) {
@@ -1779,22 +1810,6 @@ function onKeydown(e: KeyboardEvent) {
     opacity: 1;
     transform: translate(-50%, 0);
   }
-}
-
-.debug-panel {
-  position: fixed;
-  right: 8px;
-  bottom: 8px;
-  z-index: 9999;
-  max-width: 640px;
-  margin: 0;
-  padding: 6px 8px;
-  border-radius: 4px;
-  background: rgba(0, 0, 0, 0.72);
-  color: #7fdbca;
-  font: 11px/1.5 Consolas, monospace;
-  pointer-events: none;
-  white-space: pre-wrap;
 }
 
 .book-nav:disabled {

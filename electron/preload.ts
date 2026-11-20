@@ -135,6 +135,8 @@ const ireaderApi = {
     /** 截取窗口内容区指定矩形（含 iframe 合成输出）；EPUB 翻页冻结帧用，纯本地能力 */
     captureRegion: (rect: CaptureRegionRect): Promise<Result<Uint8Array>> =>
       ipcRenderer.invoke('window:captureRegion', rect),
+    /** 复位页面缩放并请求整幅重绘（全屏切换后清晰度兜底，幂等） */
+    resetPageScale: (): Promise<Result<void>> => ipcRenderer.invoke('window:resetPageScale'),
   },
   shell: {
     showInFolder: (path: string): Promise<Result<void>> =>
